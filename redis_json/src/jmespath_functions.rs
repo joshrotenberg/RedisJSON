@@ -9,7 +9,7 @@
 
 //! Custom JMESPath functions for RedisJSON
 //!
-//! This module provides 61 Redis-specific extensions to JMESPath beyond the
+//! This module provides 65 Redis-specific extensions to JMESPath beyond the
 //! standard 26 built-in functions. These functions are registered with a
 //! custom Runtime and are available in all JSON.JMESPATH queries.
 //!
@@ -104,6 +104,15 @@
 //! | `default(value, fallback)` | Return fallback if null |
 //! | `if(cond, then, else)` | Ternary conditional |
 //!
+//! ## Hash/Checksum Functions (4)
+//!
+//! | Function | Description |
+//! |----------|-------------|
+//! | `md5(string)` | MD5 hash (hex) |
+//! | `sha1(string)` | SHA-1 hash (hex) |
+//! | `sha256(string)` | SHA-256 hash (hex) |
+//! | `crc32(string)` | CRC32 checksum (number) |
+//!
 //! ## Portability Note
 //!
 //! Queries using these custom functions will NOT work in other JMESPath
@@ -116,6 +125,12 @@ use std::sync::LazyLock;
 
 use jmespath::functions::{ArgumentType, Function, Signature};
 use jmespath::{Context, ErrorReason, JmespathError, Rcvar, Runtime, Variable};
+
+// Hash/checksum imports
+use crc32fast::Hasher as Crc32Hasher;
+use md5::{Digest, Md5};
+use sha1::Sha1;
+use sha2::Sha256;
 
 /// Custom JMESPath runtime with Redis-specific functions.
 ///
@@ -206,6 +221,12 @@ pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     runtime.register_function("if", Box::new(IfFn::new()));
     runtime.register_function("median", Box::new(MedianFn::new()));
     runtime.register_function("percentile", Box::new(PercentileFn::new()));
+
+    // Register custom functions - Hash/Checksum
+    runtime.register_function("md5", Box::new(Md5Fn::new()));
+    runtime.register_function("sha1", Box::new(Sha1Fn::new()));
+    runtime.register_function("sha256", Box::new(Sha256Fn::new()));
+    runtime.register_function("crc32", Box::new(Crc32Fn::new()));
 
     runtime
 });
@@ -2401,6 +2422,119 @@ impl Function for PercentileFn {
     }
 }
 
+// =============================================================================
+// HASH/CHECKSUM FUNCTIONS
+// =============================================================================
+
+// =============================================================================
+// md5(string) -> string (hex-encoded MD5 hash)
+// =============================================================================
+
+define_function!(Md5Fn, vec![ArgumentType::String], None);
+
+impl Function for Md5Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut hasher = Md5::new();
+        hasher.update(input.as_bytes());
+        let result = hasher.finalize();
+        let hex_string = format!("{:x}", result);
+
+        Ok(Rc::new(Variable::String(hex_string)))
+    }
+}
+
+// =============================================================================
+// sha1(string) -> string (hex-encoded SHA-1 hash)
+// =============================================================================
+
+define_function!(Sha1Fn, vec![ArgumentType::String], None);
+
+impl Function for Sha1Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut hasher = Sha1::new();
+        hasher.update(input.as_bytes());
+        let result = hasher.finalize();
+        let hex_string = format!("{:x}", result);
+
+        Ok(Rc::new(Variable::String(hex_string)))
+    }
+}
+
+// =============================================================================
+// sha256(string) -> string (hex-encoded SHA-256 hash)
+// =============================================================================
+
+define_function!(Sha256Fn, vec![ArgumentType::String], None);
+
+impl Function for Sha256Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        let result = hasher.finalize();
+        let hex_string = format!("{:x}", result);
+
+        Ok(Rc::new(Variable::String(hex_string)))
+    }
+}
+
+// =============================================================================
+// crc32(string) -> number (CRC32 checksum as integer)
+// =============================================================================
+
+define_function!(Crc32Fn, vec![ArgumentType::String], None);
+
+impl Function for Crc32Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut hasher = Crc32Hasher::new();
+        hasher.update(input.as_bytes());
+        let checksum = hasher.finalize();
+
+        Ok(Rc::new(Variable::Number(serde_json::Number::from(
+            checksum,
+        ))))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3719,5 +3853,123 @@ mod tests {
     fn test_percentile_single_element() {
         let data = json!({"nums": [42]});
         assert_eq!(query("percentile(nums, `99`)", &data).unwrap(), "42.0");
+    }
+
+    // =========================================================================
+    // md5() tests
+    // =========================================================================
+
+    #[test]
+    fn test_md5_basic() {
+        let data = json!({"s": "hello"});
+        // MD5 of "hello" is 5d41402abc4b2a76b9719d911017c592
+        assert_eq!(
+            query("md5(s)", &data).unwrap(),
+            r#""5d41402abc4b2a76b9719d911017c592""#
+        );
+    }
+
+    #[test]
+    fn test_md5_empty_string() {
+        let data = json!({"s": ""});
+        // MD5 of "" is d41d8cd98f00b204e9800998ecf8427e
+        assert_eq!(
+            query("md5(s)", &data).unwrap(),
+            r#""d41d8cd98f00b204e9800998ecf8427e""#
+        );
+    }
+
+    #[test]
+    fn test_md5_longer_string() {
+        let data = json!({"s": "The quick brown fox jumps over the lazy dog"});
+        // Known MD5 hash
+        assert_eq!(
+            query("md5(s)", &data).unwrap(),
+            r#""9e107d9d372bb6826bd81d3542a419d6""#
+        );
+    }
+
+    // =========================================================================
+    // sha1() tests
+    // =========================================================================
+
+    #[test]
+    fn test_sha1_basic() {
+        let data = json!({"s": "hello"});
+        // SHA1 of "hello" is aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+        assert_eq!(
+            query("sha1(s)", &data).unwrap(),
+            r#""aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d""#
+        );
+    }
+
+    #[test]
+    fn test_sha1_empty_string() {
+        let data = json!({"s": ""});
+        // SHA1 of "" is da39a3ee5e6b4b0d3255bfef95601890afd80709
+        assert_eq!(
+            query("sha1(s)", &data).unwrap(),
+            r#""da39a3ee5e6b4b0d3255bfef95601890afd80709""#
+        );
+    }
+
+    // =========================================================================
+    // sha256() tests
+    // =========================================================================
+
+    #[test]
+    fn test_sha256_basic() {
+        let data = json!({"s": "hello"});
+        // SHA256 of "hello"
+        assert_eq!(
+            query("sha256(s)", &data).unwrap(),
+            r#""2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824""#
+        );
+    }
+
+    #[test]
+    fn test_sha256_empty_string() {
+        let data = json!({"s": ""});
+        // SHA256 of ""
+        assert_eq!(
+            query("sha256(s)", &data).unwrap(),
+            r#""e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855""#
+        );
+    }
+
+    // =========================================================================
+    // crc32() tests
+    // =========================================================================
+
+    #[test]
+    fn test_crc32_basic() {
+        let data = json!({"s": "hello"});
+        // CRC32 of "hello" is 907060870
+        assert_eq!(query("crc32(s)", &data).unwrap(), "907060870");
+    }
+
+    #[test]
+    fn test_crc32_empty_string() {
+        let data = json!({"s": ""});
+        // CRC32 of "" is 0
+        assert_eq!(query("crc32(s)", &data).unwrap(), "0");
+    }
+
+    #[test]
+    fn test_crc32_longer_string() {
+        let data = json!({"s": "The quick brown fox jumps over the lazy dog"});
+        // Known CRC32
+        assert_eq!(query("crc32(s)", &data).unwrap(), "1095738169");
+    }
+
+    // =========================================================================
+    // Hash functions in pipelines
+    // =========================================================================
+
+    #[test]
+    fn test_hash_in_projection() {
+        let data = json!({"users": [{"name": "alice"}, {"name": "bob"}]});
+        let result = query("users[*].{name: name, hash: md5(name)}", &data).unwrap();
+        assert!(result.contains("6384e2b2184bcbf58eccf10ca7a6563c")); // md5("alice")
     }
 }

@@ -34,6 +34,10 @@ redis-module-macros = { git="https://github.com/RedisLabsModules/redismodule-rs"
 itertools = "0.13"
 jmespath = { version = "0.4", optional = true }
 json_path = { path = "../json_path" }
+md-5 = { version = "0.10", optional = true }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+crc32fast = { version = "1.4", optional = true }
 linkme = "0.3"
 lazy_static = "1"
 
@@ -41,7 +45,7 @@ lazy_static = "1"
 default = ["jmespath"]
 as-library = []
 thread_safe = ["ijson/thread_safe"]
-jmespath = ["dep:jmespath"]
+jmespath = ["dep:jmespath", "dep:md-5", "dep:sha1", "dep:sha2", "dep:crc32fast"]
 
 [dev-dependencies]
 criterion = "0.5"

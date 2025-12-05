@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 61 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 65 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -872,6 +872,44 @@ redis> JSON.JMESPATH doc "is_null(n)"
 "true"
 ```
 
+### Hash/Checksum Functions (4)
+
+#### `md5(string) -> string`
+Returns hex-encoded MD5 hash of the input string.
+
+```bash
+redis> JSON.SET doc $ '{"data": "hello world"}'
+redis> JSON.JMESPATH doc "md5(data)"
+"\"5eb63bbbe01eeed093cb22bb8f5acdc3\""
+```
+
+#### `sha1(string) -> string`
+Returns hex-encoded SHA-1 hash of the input string.
+
+```bash
+redis> JSON.SET doc $ '{"data": "hello world"}'
+redis> JSON.JMESPATH doc "sha1(data)"
+"\"2aae6c35c94fcfb415dbe95f408b9ce91ee846ed\""
+```
+
+#### `sha256(string) -> string`
+Returns hex-encoded SHA-256 hash of the input string.
+
+```bash
+redis> JSON.SET doc $ '{"data": "hello world"}'
+redis> JSON.JMESPATH doc "sha256(data)"
+"\"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\""
+```
+
+#### `crc32(string) -> number`
+Returns CRC32 checksum as an integer.
+
+```bash
+redis> JSON.SET doc $ '{"data": "hello world"}'
+redis> JSON.JMESPATH doc "crc32(data)"
+"222957957"
+```
+
 ### Utility/Conditional Functions (4)
 
 #### `now() -> number`
@@ -1170,6 +1208,9 @@ items[?is_number(@)]
 ### Custom Utility/Conditional Functions (4)
 `now`, `now_ms`, `default`, `if`
 
+### Custom Hash/Checksum Functions (4)
+`md5`, `sha1`, `sha256`, `crc32`
+
 ---
 
 ## Error Handling
@@ -1266,11 +1307,7 @@ The following functions are being considered for future implementation. Contribu
 ### Hash/Crypto Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `md5(s)` | MD5 hash | `md5(content)` |
-| `sha1(s)` | SHA-1 hash | `sha1(content)` |
-| `sha256(s)` | SHA-256 hash | `sha256(content)` |
 | `uuid()` | Generate UUID v4 | `uuid()` |
-| `crc32(s)` | CRC32 checksum | `crc32(data)` |
 
 ### Conditional/Logic Functions
 | Function | Description | Example |
