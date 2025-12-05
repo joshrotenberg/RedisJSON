@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 65 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 72 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -310,11 +310,11 @@ These functions are part of the official JMESPath specification and work identic
 
 ---
 
-## Custom Redis Functions (50)
+## Custom Redis Functions (72)
 
 These functions extend JMESPath with capabilities specific to RedisJSON. **Note:** Queries using these functions are not portable to other JMESPath implementations.
 
-### String Functions (15)
+### String Functions (18)
 
 #### `lower(string) -> string`
 Convert string to lowercase.
@@ -460,7 +460,7 @@ redis> JSON.JMESPATH doc "concat(parts, '-')"
 "\"a-b-c\""
 ```
 
-### Array Functions (17)
+### Array Functions (18)
 
 #### `unique(array) -> array`
 Remove duplicate values, preserving order.
@@ -627,7 +627,21 @@ redis> JSON.JMESPATH doc "group_by(@, 'role')"
 "{\"admin\":[{\"name\":\"Alice\",\"role\":\"admin\"},{\"name\":\"Carol\",\"role\":\"admin\"}],\"user\":[{\"name\":\"Bob\",\"role\":\"user\"}]}"
 ```
 
-### Object Functions (4)
+#### `frequencies(array) -> object`
+Count occurrences of each value in an array.
+
+```bash
+redis> JSON.SET doc $ '{"tags": ["redis", "json", "redis", "nosql", "json", "redis"]}'
+redis> JSON.JMESPATH doc "frequencies(tags)"
+"{\"json\":2,\"nosql\":1,\"redis\":3}"
+
+# Works with numbers too
+redis> JSON.SET doc $ '{"scores": [1, 2, 1, 3, 2, 1]}'
+redis> JSON.JMESPATH doc "frequencies(scores)"
+"{\"1\":3,\"2\":2,\"3\":1}"
+```
+
+### Object Functions (5)
 
 #### `entries(object) -> array`
 Convert object to array of `{key, value}` objects.
@@ -663,6 +677,23 @@ Exclude specified keys from an object.
 redis> JSON.SET doc $ '{"name": "Alice", "age": 30, "password": "secret"}'
 redis> JSON.JMESPATH doc "omit(@, ['password'])"
 "{\"age\":30,\"name\":\"Alice\"}"
+```
+
+#### `deep_merge(object1, object2) -> object`
+Recursively merge two objects. Values from the second object override the first, but nested objects are merged recursively.
+
+```bash
+redis> JSON.SET doc $ '{
+  "defaults": {"debug": false, "port": 8080, "db": {"host": "localhost", "port": 5432}},
+  "overrides": {"debug": true, "db": {"port": 5433}}
+}'
+redis> JSON.JMESPATH doc "deep_merge(defaults, overrides)"
+"{\"db\":{\"host\":\"localhost\",\"port\":5433},\"debug\":true,\"port\":8080}"
+
+# Simple merge
+redis> JSON.SET doc $ '{"a": {"x": 1}, "b": {"y": 2}}'
+redis> JSON.JMESPATH doc "deep_merge(a, b)"
+"{\"x\":1,\"y\":2}"
 ```
 
 ### Math/Statistics Functions (11)
@@ -908,6 +939,67 @@ Returns CRC32 checksum as an integer.
 redis> JSON.SET doc $ '{"data": "hello world"}'
 redis> JSON.JMESPATH doc "crc32(data)"
 "222957957"
+```
+
+### Encoding Functions (2)
+
+#### `base64_encode(string) -> string`
+Encode a string to base64.
+
+```bash
+redis> JSON.SET doc $ '{"message": "Hello, World!"}'
+redis> JSON.JMESPATH doc "base64_encode(message)"
+"\"SGVsbG8sIFdvcmxkIQ==\""
+
+# Encode sensitive data before transmission
+redis> JSON.SET doc $ '{"credentials": "user:pass"}'
+redis> JSON.JMESPATH doc "base64_encode(credentials)"
+"\"dXNlcjpwYXNz\""
+```
+
+#### `base64_decode(string) -> string`
+Decode a base64-encoded string.
+
+```bash
+redis> JSON.SET doc $ '{"encoded": "SGVsbG8sIFdvcmxkIQ=="}'
+redis> JSON.JMESPATH doc "base64_decode(encoded)"
+"\"Hello, World!\""
+
+# Roundtrip example
+redis> JSON.SET doc $ '{"data": "secret"}'
+redis> JSON.JMESPATH doc "base64_decode(base64_encode(data))"
+"\"secret\""
+```
+
+### String Case Aliases (3)
+
+These are snake_case aliases for consistency with other functions.
+
+#### `upper_case(string) -> string`
+Alias for `upper()`. Convert string to uppercase.
+
+```bash
+redis> JSON.SET doc $ '{"name": "hello"}'
+redis> JSON.JMESPATH doc "upper_case(name)"
+"\"HELLO\""
+```
+
+#### `lower_case(string) -> string`
+Alias for `lower()`. Convert string to lowercase.
+
+```bash
+redis> JSON.SET doc $ '{"name": "HELLO"}'
+redis> JSON.JMESPATH doc "lower_case(name)"
+"\"hello\""
+```
+
+#### `title_case(string) -> string`
+Alias for `title()`. Capitalize the first letter of each word.
+
+```bash
+redis> JSON.SET doc $ '{"name": "hello world"}'
+redis> JSON.JMESPATH doc "title_case(name)"
+"\"Hello World\""
 ```
 
 ### Utility/Conditional Functions (4)
@@ -1190,14 +1282,14 @@ items[?is_number(@)]
 ### Standard Functions (26)
 `abs`, `avg`, `ceil`, `contains`, `ends_with`, `floor`, `join`, `keys`, `length`, `map`, `max`, `max_by`, `merge`, `min`, `min_by`, `not_null`, `reverse`, `sort`, `sort_by`, `starts_with`, `sum`, `to_array`, `to_number`, `to_string`, `type`, `values`
 
-### Custom String Functions (15)
-`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`
+### Custom String Functions (18)
+`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`, `upper_case`, `lower_case`, `title_case`
 
-### Custom Array Functions (17)
-`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`
+### Custom Array Functions (18)
+`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`, `frequencies`
 
-### Custom Object Functions (4)
-`entries`, `from_entries`, `pick`, `omit`
+### Custom Object Functions (5)
+`entries`, `from_entries`, `pick`, `omit`, `deep_merge`
 
 ### Custom Math/Statistics Functions (11)
 `round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`
@@ -1210,6 +1302,9 @@ items[?is_number(@)]
 
 ### Custom Hash/Checksum Functions (4)
 `md5`, `sha1`, `sha256`, `crc32`
+
+### Custom Encoding Functions (2)
+`base64_encode`, `base64_decode`
 
 ---
 
@@ -1254,7 +1349,6 @@ The following functions are being considered for future implementation. Contribu
 | `rotate(arr, n)` | Rotate elements | `rotate([1,2,3], 1)` → `[2,3,1]` |
 | `shuffle(arr, seed?)` | Deterministic shuffle | `shuffle(items, 42)` |
 | `sample(arr, n, seed?)` | Random sample | `sample(items, 5)` |
-| `frequencies(arr)` | Count occurrences | `frequencies(tags)` → `{a: 2, b: 1}` |
 | `index_by(arr, &expr)` | Create lookup object | `index_by(users, &id)` |
 | `cartesian(arr1, arr2)` | Cartesian product | `cartesian([1,2], [a,b])` |
 
@@ -1262,7 +1356,6 @@ The following functions are being considered for future implementation. Contribu
 | Function | Description | Example |
 |----------|-------------|---------|
 | `rename_keys(obj, map)` | Rename object keys | `rename_keys(obj, {old: 'new'})` |
-| `deep_merge(obj1, obj2)` | Recursive merge | `deep_merge(defaults, config)` |
 | `flatten_keys(obj, sep?)` | Flatten nested object | `flatten_keys({a: {b: 1}})` → `{"a.b": 1}` |
 | `unflatten_keys(obj, sep?)` | Unflatten object | `unflatten_keys({"a.b": 1})` → `{a: {b: 1}}` |
 | `map_values(obj, &expr)` | Transform all values | `map_values(prices, &round(@, 2))` |
@@ -1295,8 +1388,6 @@ The following functions are being considered for future implementation. Contribu
 ### Encoding Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `base64_encode(s)` | Encode to base64 | `base64_encode(data)` |
-| `base64_decode(s)` | Decode from base64 | `base64_decode(encoded)` |
 | `url_encode(s)` | URL encode | `url_encode(query)` |
 | `url_decode(s)` | URL decode | `url_decode(param)` |
 | `json_encode(any)` | Encode as JSON string | `json_encode(obj)` |

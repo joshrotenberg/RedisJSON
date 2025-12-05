@@ -38,6 +38,7 @@ md-5 = { version = "0.10", optional = true }
 sha1 = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 crc32fast = { version = "1.4", optional = true }
+base64 = { version = "0.22", optional = true }
 linkme = "0.3"
 lazy_static = "1"
 
@@ -45,7 +46,7 @@ lazy_static = "1"
 default = ["jmespath"]
 as-library = []
 thread_safe = ["ijson/thread_safe"]
-jmespath = ["dep:jmespath", "dep:md-5", "dep:sha1", "dep:sha2", "dep:crc32fast"]
+jmespath = ["dep:jmespath", "dep:md-5", "dep:sha1", "dep:sha2", "dep:crc32fast", "dep:base64"]
 
 [dev-dependencies]
 criterion = "0.5"

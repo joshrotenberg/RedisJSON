@@ -9,11 +9,11 @@
 
 //! Custom JMESPath functions for RedisJSON
 //!
-//! This module provides 65 Redis-specific extensions to JMESPath beyond the
+//! This module provides 72 Redis-specific extensions to JMESPath beyond the
 //! standard 26 built-in functions. These functions are registered with a
 //! custom Runtime and are available in all JSON.JMESPATH queries.
 //!
-//! ## String Functions (15)
+//! ## String Functions (18)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -32,6 +32,9 @@
 //! | `index_of(string, search)` | Find first occurrence |
 //! | `last_index_of(string, search)` | Find last occurrence |
 //! | `concat(array, sep?)` | Join strings |
+//! | `upper_case(string)` | Convert to uppercase (alias) |
+//! | `lower_case(string)` | Convert to lowercase (alias) |
+//! | `title_case(string)` | Title case conversion |
 //!
 //! ## Array Functions (17)
 //!
@@ -54,8 +57,9 @@
 //! | `intersection(arr1, arr2)` | Set intersection |
 //! | `union(arr1, arr2)` | Set union |
 //! | `group_by(array, field)` | Group by field value |
+//! | `frequencies(array)` | Count occurrences |
 //!
-//! ## Object Functions (4)
+//! ## Object Functions (5)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -63,6 +67,7 @@
 //! | `from_entries(array)` | Convert [{key, value}] to object |
 //! | `pick(object, keys)` | Select specific keys |
 //! | `omit(object, keys)` | Exclude specific keys |
+//! | `deep_merge(obj1, obj2)` | Recursively merge objects |
 //!
 //! ## Math/Statistics Functions (11)
 //!
@@ -113,6 +118,13 @@
 //! | `sha256(string)` | SHA-256 hash (hex) |
 //! | `crc32(string)` | CRC32 checksum (number) |
 //!
+//! ## Encoding Functions (2)
+//!
+//! | Function | Description |
+//! |----------|-------------|
+//! | `base64_encode(string)` | Base64 encode |
+//! | `base64_decode(string)` | Base64 decode |
+//!
 //! ## Portability Note
 //!
 //! Queries using these custom functions will NOT work in other JMESPath
@@ -131,6 +143,9 @@ use crc32fast::Hasher as Crc32Hasher;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::Sha256;
+
+// Base64 encoding
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 
 /// Custom JMESPath runtime with Redis-specific functions.
 ///
@@ -227,6 +242,15 @@ pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     runtime.register_function("sha1", Box::new(Sha1Fn::new()));
     runtime.register_function("sha256", Box::new(Sha256Fn::new()));
     runtime.register_function("crc32", Box::new(Crc32Fn::new()));
+
+    // Register custom functions - Tier 2: Encoding/Statistics/Utilities
+    runtime.register_function("frequencies", Box::new(FrequenciesFn::new()));
+    runtime.register_function("base64_encode", Box::new(Base64EncodeFn::new()));
+    runtime.register_function("base64_decode", Box::new(Base64DecodeFn::new()));
+    runtime.register_function("upper_case", Box::new(UpperCaseFn::new()));
+    runtime.register_function("lower_case", Box::new(LowerCaseFn::new()));
+    runtime.register_function("title_case", Box::new(TitleCaseFn::new()));
+    runtime.register_function("deep_merge", Box::new(DeepMergeFn::new()));
 
     runtime
 });
@@ -2535,6 +2559,259 @@ impl Function for Crc32Fn {
     }
 }
 
+// =============================================================================
+// TIER 2 FUNCTIONS: Encoding, Statistics, Utilities
+// =============================================================================
+
+// =============================================================================
+// frequencies(array) -> object (count occurrences of each value)
+// =============================================================================
+
+define_function!(FrequenciesFn, vec![ArgumentType::Array], None);
+
+impl Function for FrequenciesFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+        for item in arr {
+            // Use JSON string as key for all types
+            let key = match &**item {
+                Variable::String(s) => s.clone(),
+                Variable::Number(n) => n.to_string(),
+                Variable::Bool(b) => b.to_string(),
+                Variable::Null => "null".to_string(),
+                _ => serde_json::to_string(&**item).unwrap_or_else(|_| "null".to_string()),
+            };
+            *counts.entry(key).or_insert(0) += 1;
+        }
+
+        let result: std::collections::BTreeMap<String, Rcvar> = counts
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    Rc::new(Variable::Number(serde_json::Number::from(v))) as Rcvar,
+                )
+            })
+            .collect();
+
+        Ok(Rc::new(Variable::Object(result)))
+    }
+}
+
+// =============================================================================
+// base64_encode(string) -> string
+// =============================================================================
+
+define_function!(Base64EncodeFn, vec![ArgumentType::String], None);
+
+impl Function for Base64EncodeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let encoded = BASE64_STANDARD.encode(input.as_bytes());
+        Ok(Rc::new(Variable::String(encoded)))
+    }
+}
+
+// =============================================================================
+// base64_decode(string) -> string
+// =============================================================================
+
+define_function!(Base64DecodeFn, vec![ArgumentType::String], None);
+
+impl Function for Base64DecodeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        match BASE64_STANDARD.decode(input.as_bytes()) {
+            Ok(decoded) => {
+                let s = String::from_utf8(decoded).map_err(|_| {
+                    JmespathError::new(
+                        ctx.expression,
+                        0,
+                        ErrorReason::Parse("Decoded bytes are not valid UTF-8".to_owned()),
+                    )
+                })?;
+                Ok(Rc::new(Variable::String(s)))
+            }
+            Err(_) => Err(JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Invalid base64 input".to_owned()),
+            )),
+        }
+    }
+}
+
+// =============================================================================
+// upper_case(string) -> string (alias for upper, snake_case style)
+// =============================================================================
+
+define_function!(UpperCaseFn, vec![ArgumentType::String], None);
+
+impl Function for UpperCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        Ok(Rc::new(Variable::String(s.to_uppercase())))
+    }
+}
+
+// =============================================================================
+// lower_case(string) -> string (alias for lower, snake_case style)
+// =============================================================================
+
+define_function!(LowerCaseFn, vec![ArgumentType::String], None);
+
+impl Function for LowerCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        Ok(Rc::new(Variable::String(s.to_lowercase())))
+    }
+}
+
+// =============================================================================
+// title_case(string) -> string (alias for title, snake_case style)
+// =============================================================================
+
+define_function!(TitleCaseFn, vec![ArgumentType::String], None);
+
+impl Function for TitleCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let result = s
+            .split_whitespace()
+            .map(|word| {
+                let mut chars = word.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(first) => {
+                        first.to_uppercase().to_string() + &chars.as_str().to_lowercase()
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(Rc::new(Variable::String(result)))
+    }
+}
+
+// =============================================================================
+// deep_merge(obj1, obj2) -> object (recursively merge two objects)
+// =============================================================================
+
+define_function!(
+    DeepMergeFn,
+    vec![ArgumentType::Object, ArgumentType::Object],
+    None
+);
+
+fn deep_merge_objects(
+    base: &std::collections::BTreeMap<String, Rcvar>,
+    overlay: &std::collections::BTreeMap<String, Rcvar>,
+) -> std::collections::BTreeMap<String, Rcvar> {
+    let mut result = base.clone();
+
+    for (key, overlay_value) in overlay {
+        if let Some(base_value) = result.get(key) {
+            // Both values exist - check if both are objects for recursive merge
+            if let (Some(base_obj), Some(overlay_obj)) =
+                (base_value.as_object(), overlay_value.as_object())
+            {
+                let merged = deep_merge_objects(base_obj, overlay_obj);
+                result.insert(key.clone(), Rc::new(Variable::Object(merged)));
+            } else {
+                // Overlay wins for non-object values
+                result.insert(key.clone(), overlay_value.clone());
+            }
+        } else {
+            // Key only in overlay
+            result.insert(key.clone(), overlay_value.clone());
+        }
+    }
+
+    result
+}
+
+impl Function for DeepMergeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let obj1 = args[0].as_object().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected object argument".to_owned()),
+            )
+        })?;
+
+        let obj2 = args[1].as_object().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected object argument".to_owned()),
+            )
+        })?;
+
+        let merged = deep_merge_objects(obj1, obj2);
+        Ok(Rc::new(Variable::Object(merged)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3971,5 +4248,210 @@ mod tests {
         let data = json!({"users": [{"name": "alice"}, {"name": "bob"}]});
         let result = query("users[*].{name: name, hash: md5(name)}", &data).unwrap();
         assert!(result.contains("6384e2b2184bcbf58eccf10ca7a6563c")); // md5("alice")
+    }
+
+    // =========================================================================
+    // TIER 2 FUNCTIONS TESTS
+    // =========================================================================
+
+    // =========================================================================
+    // frequencies() tests
+    // =========================================================================
+
+    #[test]
+    fn test_frequencies_strings() {
+        let data = json!({"arr": ["a", "b", "a", "c", "b", "a"]});
+        let result = query("frequencies(arr)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], 3);
+        assert_eq!(parsed["b"], 2);
+        assert_eq!(parsed["c"], 1);
+    }
+
+    #[test]
+    fn test_frequencies_numbers() {
+        let data = json!({"arr": [1, 2, 1, 3, 2, 1]});
+        let result = query("frequencies(arr)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["1"], 3);
+        assert_eq!(parsed["2"], 2);
+        assert_eq!(parsed["3"], 1);
+    }
+
+    #[test]
+    fn test_frequencies_empty() {
+        let data = json!({"arr": []});
+        assert_eq!(query("frequencies(arr)", &data).unwrap(), "{}");
+    }
+
+    #[test]
+    fn test_frequencies_mixed() {
+        let data = json!({"arr": ["a", 1, "a", true, null]});
+        let result = query("frequencies(arr)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], 2);
+        assert_eq!(parsed["1"], 1);
+        assert_eq!(parsed["true"], 1);
+        assert_eq!(parsed["null"], 1);
+    }
+
+    // =========================================================================
+    // base64_encode() tests
+    // =========================================================================
+
+    #[test]
+    fn test_base64_encode_basic() {
+        let data = json!({"s": "hello"});
+        assert_eq!(query("base64_encode(s)", &data).unwrap(), r#""aGVsbG8=""#);
+    }
+
+    #[test]
+    fn test_base64_encode_empty() {
+        let data = json!({"s": ""});
+        assert_eq!(query("base64_encode(s)", &data).unwrap(), r#""""#);
+    }
+
+    #[test]
+    fn test_base64_encode_longer() {
+        let data = json!({"s": "Hello, World!"});
+        assert_eq!(
+            query("base64_encode(s)", &data).unwrap(),
+            r#""SGVsbG8sIFdvcmxkIQ==""#
+        );
+    }
+
+    // =========================================================================
+    // base64_decode() tests
+    // =========================================================================
+
+    #[test]
+    fn test_base64_decode_basic() {
+        let data = json!({"s": "aGVsbG8="});
+        assert_eq!(query("base64_decode(s)", &data).unwrap(), r#""hello""#);
+    }
+
+    #[test]
+    fn test_base64_decode_empty() {
+        let data = json!({"s": ""});
+        assert_eq!(query("base64_decode(s)", &data).unwrap(), r#""""#);
+    }
+
+    #[test]
+    fn test_base64_roundtrip() {
+        let data = json!({"s": "The quick brown fox"});
+        // Encode then decode should give back original
+        let encoded = query("base64_encode(s)", &data).unwrap();
+        let data2 = json!({"s": encoded.trim_matches('"')});
+        assert_eq!(
+            query("base64_decode(s)", &data2).unwrap(),
+            r#""The quick brown fox""#
+        );
+    }
+
+    // =========================================================================
+    // upper_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_upper_case_basic() {
+        let data = json!({"s": "hello"});
+        assert_eq!(query("upper_case(s)", &data).unwrap(), r#""HELLO""#);
+    }
+
+    #[test]
+    fn test_upper_case_mixed() {
+        let data = json!({"s": "Hello World"});
+        assert_eq!(query("upper_case(s)", &data).unwrap(), r#""HELLO WORLD""#);
+    }
+
+    // =========================================================================
+    // lower_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_lower_case_basic() {
+        let data = json!({"s": "HELLO"});
+        assert_eq!(query("lower_case(s)", &data).unwrap(), r#""hello""#);
+    }
+
+    #[test]
+    fn test_lower_case_mixed() {
+        let data = json!({"s": "Hello World"});
+        assert_eq!(query("lower_case(s)", &data).unwrap(), r#""hello world""#);
+    }
+
+    // =========================================================================
+    // title_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_title_case_basic() {
+        let data = json!({"s": "hello world"});
+        assert_eq!(query("title_case(s)", &data).unwrap(), r#""Hello World""#);
+    }
+
+    #[test]
+    fn test_title_case_all_caps() {
+        let data = json!({"s": "HELLO WORLD"});
+        assert_eq!(query("title_case(s)", &data).unwrap(), r#""Hello World""#);
+    }
+
+    #[test]
+    fn test_title_case_single_word() {
+        let data = json!({"s": "hello"});
+        assert_eq!(query("title_case(s)", &data).unwrap(), r#""Hello""#);
+    }
+
+    // =========================================================================
+    // deep_merge() tests
+    // =========================================================================
+
+    #[test]
+    fn test_deep_merge_simple() {
+        let data = json!({
+            "a": {"x": 1},
+            "b": {"y": 2}
+        });
+        let result = query("deep_merge(a, b)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["x"], 1);
+        assert_eq!(parsed["y"], 2);
+    }
+
+    #[test]
+    fn test_deep_merge_nested() {
+        let data = json!({
+            "a": {"config": {"debug": true, "port": 8080}},
+            "b": {"config": {"debug": false, "host": "localhost"}}
+        });
+        let result = query("deep_merge(a, b)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["config"]["debug"], false); // overlay wins
+        assert_eq!(parsed["config"]["port"], 8080); // from base
+        assert_eq!(parsed["config"]["host"], "localhost"); // from overlay
+    }
+
+    #[test]
+    fn test_deep_merge_overlay_wins() {
+        let data = json!({
+            "a": {"x": 1, "y": 2},
+            "b": {"x": 100}
+        });
+        let result = query("deep_merge(a, b)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["x"], 100); // overlay wins
+        assert_eq!(parsed["y"], 2); // preserved from base
+    }
+
+    #[test]
+    fn test_deep_merge_deeply_nested() {
+        let data = json!({
+            "a": {"l1": {"l2": {"l3": {"val": "base"}}}},
+            "b": {"l1": {"l2": {"l3": {"extra": "overlay"}}}}
+        });
+        let result = query("deep_merge(a, b)", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["l1"]["l2"]["l3"]["val"], "base");
+        assert_eq!(parsed["l1"]["l2"]["l3"]["extra"], "overlay");
     }
 }
