@@ -37,6 +37,8 @@ use crate::c_api::{
     LLAPI_CTX,
 };
 
+#[cfg(feature = "jmespath")]
+use crate::commands::json_jmespath_command_impl;
 use crate::commands::{
     json_arr_append_command_impl, json_arr_index_command_impl, json_arr_insert_command_impl,
     json_arr_len_command_impl, json_arr_pop_command_impl, json_arr_trim_command_impl,
@@ -57,6 +59,10 @@ pub mod defrag;
 pub mod error;
 mod formatter;
 pub mod ivalue_manager;
+#[cfg(feature = "jmespath")]
+mod jmespath_functions;
+#[cfg(feature = "jmespath")]
+mod jmespath_query;
 mod key_value;
 pub mod manager;
 pub mod redisjson;
@@ -336,6 +342,13 @@ macro_rules! redis_json_module_create {
         json_resp_command!(
             pub fn json_resp(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 json_command!(json_resp_command_impl)(ctx, args)
+            }
+        );
+
+        #[cfg(feature = "jmespath")]
+        json_jmespath_command!(
+            pub fn json_jmespath(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+                json_command!(json_jmespath_command_impl)(ctx, args)
             }
         );
 

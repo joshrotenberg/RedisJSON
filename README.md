@@ -28,9 +28,52 @@ RedisJSON is a [Redis](https://redis.io/) module that implements [ECMA-404 The J
 
 * Full support of the JSON standard
 * [JSONPath](https://goessner.net/articles/JsonPath/) syntax for selecting elements inside documents
+* [JMESPath](https://jmespath.org/) query support for powerful data extraction and transformation (see below)
 * Documents are stored as binary data in a tree structure, allowing fast access to sub-elements
 * Typed atomic operations for all JSON value types
 * Secondary index support when combined with [RediSearch](https://redis.io/docs/latest/develop/interact/search-and-query/)
+
+## JMESPath Support
+
+This fork adds experimental JMESPath query support via the `JSON.JMESPATH` command. JMESPath is a query language for JSON that complements JSONPath with powerful features like:
+
+* **Projections**: Extract and reshape data with `[*].field` syntax
+* **Filters**: Query with conditions like `items[?price > \`100\`]`
+* **Pipes**: Chain operations with `expression | sort(@) | [0]`
+* **Multiselect**: Reshape output with `{name: field1, value: field2}`
+* **76 functions**: 26 standard JMESPath + 50 custom Redis-specific functions
+* **Expression caching**: Thread-local LRU cache (256 entries) for high-throughput workloads
+* **RESP3 support**: `FORMAT EXPAND` returns native Redis types instead of JSON strings
+
+```bash
+# Basic usage
+redis> JSON.SET users $ '[{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]'
+OK
+redis> JSON.JMESPATH users "[*].name"
+["Alice","Bob"]
+redis> JSON.JMESPATH users "[?age > `25`].name"
+["Alice"]
+
+# Reshape + aggregate
+redis> JSON.JMESPATH users "{names: [*].name, avg_age: avg([*].age)}"
+{"names":["Alice","Bob"],"avg_age":27.5}
+
+# Custom functions
+redis> JSON.JMESPATH users "[*].{name: upper(name), adult: age >= `18`}"
+[{"name":"ALICE","adult":true},{"name":"BOB","adult":true}]
+
+redis> JSON.JMESPATH users "unique([*].age) | sort(@)"
+[25,30]
+```
+
+**Custom function categories:**
+* **String**: `lower`, `upper`, `trim`, `split`, `replace`, `pad_left`, `capitalize`, `title`...
+* **Array**: `unique`, `flatten_deep`, `chunk`, `take`, `drop`, `range`, `includes`...
+* **Math**: `round`, `pow`, `sqrt`, `clamp`, `log`, `mod_fn`...
+* **Type**: `is_string`, `is_array`, `type_of`, `to_number`, `to_boolean`...
+* **Utility**: `now`, `now_ms`, `default`, `entries`, `from_entries`
+
+See [docs/jmespath.md](docs/jmespath.md) for full documentation, or [jmespath.org](https://jmespath.org/) for the language specification.
 
 ## Documentation
 
