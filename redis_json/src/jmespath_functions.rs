@@ -9,7 +9,7 @@
 
 //! Custom JMESPath functions for RedisJSON
 //!
-//! This module provides 50 Redis-specific extensions to JMESPath beyond the
+//! This module provides 61 Redis-specific extensions to JMESPath beyond the
 //! standard 26 built-in functions. These functions are registered with a
 //! custom Runtime and are available in all JSON.JMESPATH queries.
 //!
@@ -33,7 +33,7 @@
 //! | `last_index_of(string, search)` | Find last occurrence |
 //! | `concat(array, sep?)` | Join strings |
 //!
-//! ## Array Functions (11)
+//! ## Array Functions (17)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -48,15 +48,23 @@
 //! | `index_at(array, idx)` | Get by index (neg ok) |
 //! | `includes(array, val)` | Check membership |
 //! | `find_index(array, val)` | Find element index |
+//! | `first(array)` | First element or null |
+//! | `last(array)` | Last element or null |
+//! | `difference(arr1, arr2)` | Set difference |
+//! | `intersection(arr1, arr2)` | Set intersection |
+//! | `union(arr1, arr2)` | Set union |
+//! | `group_by(array, field)` | Group by field value |
 //!
-//! ## Object Functions (2)
+//! ## Object Functions (4)
 //!
 //! | Function | Description |
 //! |----------|-------------|
 //! | `entries(object)` | Convert to [{key, value}] |
 //! | `from_entries(array)` | Convert [{key, value}] to object |
+//! | `pick(object, keys)` | Select specific keys |
+//! | `omit(object, keys)` | Exclude specific keys |
 //!
-//! ## Math Functions (9)
+//! ## Math/Statistics Functions (11)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -69,6 +77,8 @@
 //! | `sqrt(n)` | Square root |
 //! | `log(n, base?)` | Logarithm |
 //! | `clamp(n, min, max)` | Constrain to range |
+//! | `median(array)` | Median value |
+//! | `percentile(array, p)` | Nth percentile (0-100) |
 //!
 //! ## Type Functions (10)
 //!
@@ -85,13 +95,14 @@
 //! | `is_object(any)` | Check if object |
 //! | `is_null(any)` | Check if null |
 //!
-//! ## Utility Functions (3)
+//! ## Utility/Conditional Functions (4)
 //!
 //! | Function | Description |
 //! |----------|-------------|
 //! | `now()` | Unix timestamp (seconds) |
 //! | `now_ms()` | Unix timestamp (milliseconds) |
 //! | `default(value, fallback)` | Return fallback if null |
+//! | `if(cond, then, else)` | Ternary conditional |
 //!
 //! ## Portability Note
 //!
@@ -182,6 +193,19 @@ pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 
     // Register custom functions - Date/Time
     runtime.register_function("now_ms", Box::new(NowMsFn::new()));
+
+    // Register custom functions - High-impact Tier 1
+    runtime.register_function("first", Box::new(FirstFn::new()));
+    runtime.register_function("last", Box::new(LastFn::new()));
+    runtime.register_function("group_by", Box::new(GroupByFn::new()));
+    runtime.register_function("pick", Box::new(PickFn::new()));
+    runtime.register_function("omit", Box::new(OmitFn::new()));
+    runtime.register_function("difference", Box::new(DifferenceFn::new()));
+    runtime.register_function("intersection", Box::new(IntersectionFn::new()));
+    runtime.register_function("union", Box::new(UnionFn::new()));
+    runtime.register_function("if", Box::new(IfFn::new()));
+    runtime.register_function("median", Box::new(MedianFn::new()));
+    runtime.register_function("percentile", Box::new(PercentileFn::new()));
 
     runtime
 });
@@ -1883,6 +1907,500 @@ impl Function for NowMsFn {
     }
 }
 
+// =============================================================================
+// HIGH-IMPACT FUNCTIONS - Tier 1
+// =============================================================================
+
+// =============================================================================
+// first(array) -> any (first element or null)
+// =============================================================================
+
+define_function!(FirstFn, vec![ArgumentType::Array], None);
+
+impl Function for FirstFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        Ok(arr
+            .first()
+            .cloned()
+            .unwrap_or_else(|| Rc::new(Variable::Null)))
+    }
+}
+
+// =============================================================================
+// last(array) -> any (last element or null)
+// =============================================================================
+
+define_function!(LastFn, vec![ArgumentType::Array], None);
+
+impl Function for LastFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        Ok(arr
+            .last()
+            .cloned()
+            .unwrap_or_else(|| Rc::new(Variable::Null)))
+    }
+}
+
+// =============================================================================
+// group_by(array, field_name) -> object (group array of objects by field value)
+// =============================================================================
+
+define_function!(
+    GroupByFn,
+    vec![ArgumentType::Array, ArgumentType::String],
+    None
+);
+
+impl Function for GroupByFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let field_name = args[1].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected field name string".to_owned()),
+            )
+        })?;
+
+        let mut groups: std::collections::BTreeMap<String, Vec<Rcvar>> =
+            std::collections::BTreeMap::new();
+
+        for item in arr {
+            // Get the field value from the object
+            let key = if let Some(obj) = item.as_object() {
+                if let Some(field_value) = obj.get(field_name) {
+                    match &**field_value {
+                        Variable::String(s) => s.clone(),
+                        Variable::Number(n) => n.to_string(),
+                        Variable::Bool(b) => b.to_string(),
+                        Variable::Null => "null".to_string(),
+                        _ => continue, // Skip items where key is array/object
+                    }
+                } else {
+                    "null".to_string() // Field doesn't exist
+                }
+            } else {
+                continue; // Skip non-object items
+            };
+            groups.entry(key).or_default().push(item.clone());
+        }
+
+        let result: std::collections::BTreeMap<String, Rcvar> = groups
+            .into_iter()
+            .map(|(k, v)| (k, Rc::new(Variable::Array(v)) as Rcvar))
+            .collect();
+
+        Ok(Rc::new(Variable::Object(result)))
+    }
+}
+
+// =============================================================================
+// pick(object, keys) -> object (select specific keys)
+// =============================================================================
+
+define_function!(
+    PickFn,
+    vec![ArgumentType::Object, ArgumentType::Array],
+    None
+);
+
+impl Function for PickFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let obj = args[0].as_object().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected object argument".to_owned()),
+            )
+        })?;
+
+        let keys_arr = args[1].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array of keys".to_owned()),
+            )
+        })?;
+
+        let keys: HashSet<String> = keys_arr
+            .iter()
+            .filter_map(|k| k.as_string().map(|s| s.to_string()))
+            .collect();
+
+        let result: std::collections::BTreeMap<String, Rcvar> = obj
+            .iter()
+            .filter(|(k, _)| keys.contains(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        Ok(Rc::new(Variable::Object(result)))
+    }
+}
+
+// =============================================================================
+// omit(object, keys) -> object (exclude specific keys)
+// =============================================================================
+
+define_function!(
+    OmitFn,
+    vec![ArgumentType::Object, ArgumentType::Array],
+    None
+);
+
+impl Function for OmitFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let obj = args[0].as_object().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected object argument".to_owned()),
+            )
+        })?;
+
+        let keys_arr = args[1].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array of keys".to_owned()),
+            )
+        })?;
+
+        let keys: HashSet<String> = keys_arr
+            .iter()
+            .filter_map(|k| k.as_string().map(|s| s.to_string()))
+            .collect();
+
+        let result: std::collections::BTreeMap<String, Rcvar> = obj
+            .iter()
+            .filter(|(k, _)| !keys.contains(*k))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        Ok(Rc::new(Variable::Object(result)))
+    }
+}
+
+// =============================================================================
+// difference(arr1, arr2) -> array (set difference: elements in arr1 not in arr2)
+// =============================================================================
+
+define_function!(
+    DifferenceFn,
+    vec![ArgumentType::Array, ArgumentType::Array],
+    None
+);
+
+impl Function for DifferenceFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr1 = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let arr2 = args[1].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        // Convert arr2 to a set of JSON strings for comparison
+        let set2: HashSet<String> = arr2
+            .iter()
+            .map(|v| serde_json::to_string(&**v).unwrap_or_default())
+            .collect();
+
+        let result: Vec<Rcvar> = arr1
+            .iter()
+            .filter(|v| {
+                let key = serde_json::to_string(&***v).unwrap_or_default();
+                !set2.contains(&key)
+            })
+            .cloned()
+            .collect();
+
+        Ok(Rc::new(Variable::Array(result)))
+    }
+}
+
+// =============================================================================
+// intersection(arr1, arr2) -> array (set intersection: elements in both)
+// =============================================================================
+
+define_function!(
+    IntersectionFn,
+    vec![ArgumentType::Array, ArgumentType::Array],
+    None
+);
+
+impl Function for IntersectionFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr1 = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let arr2 = args[1].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        // Convert arr2 to a set of JSON strings for comparison
+        let set2: HashSet<String> = arr2
+            .iter()
+            .map(|v| serde_json::to_string(&**v).unwrap_or_default())
+            .collect();
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let result: Vec<Rcvar> = arr1
+            .iter()
+            .filter(|v| {
+                let key = serde_json::to_string(&***v).unwrap_or_default();
+                set2.contains(&key) && seen.insert(key)
+            })
+            .cloned()
+            .collect();
+
+        Ok(Rc::new(Variable::Array(result)))
+    }
+}
+
+// =============================================================================
+// union(arr1, arr2) -> array (set union: unique elements from both)
+// =============================================================================
+
+define_function!(
+    UnionFn,
+    vec![ArgumentType::Array, ArgumentType::Array],
+    None
+);
+
+impl Function for UnionFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr1 = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let arr2 = args[1].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut result: Vec<Rcvar> = Vec::new();
+
+        for item in arr1.iter().chain(arr2.iter()) {
+            let key = serde_json::to_string(&**item).unwrap_or_default();
+            if seen.insert(key) {
+                result.push(item.clone());
+            }
+        }
+
+        Ok(Rc::new(Variable::Array(result)))
+    }
+}
+
+// =============================================================================
+// if_fn(condition, then_value, else_value) -> any (ternary conditional)
+// Named if_fn to avoid Rust keyword conflict
+// =============================================================================
+
+define_function!(
+    IfFn,
+    vec![ArgumentType::Any, ArgumentType::Any, ArgumentType::Any],
+    None
+);
+
+impl Function for IfFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let condition = &args[0];
+        let then_value = &args[1];
+        let else_value = &args[2];
+
+        // JMESPath truthiness: false and null are falsy, everything else is truthy
+        let is_truthy = match &**condition {
+            Variable::Bool(b) => *b,
+            Variable::Null => false,
+            _ => true,
+        };
+
+        if is_truthy {
+            Ok(then_value.clone())
+        } else {
+            Ok(else_value.clone())
+        }
+    }
+}
+
+// =============================================================================
+// median(array) -> number (median value of numeric array)
+// =============================================================================
+
+define_function!(MedianFn, vec![ArgumentType::Array], None);
+
+impl Function for MedianFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let mut numbers: Vec<f64> = arr.iter().filter_map(|v| v.as_number()).collect();
+
+        if numbers.is_empty() {
+            return Ok(Rc::new(Variable::Null));
+        }
+
+        numbers.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let len = numbers.len();
+        let median = if len % 2 == 0 {
+            (numbers[len / 2 - 1] + numbers[len / 2]) / 2.0
+        } else {
+            numbers[len / 2]
+        };
+
+        Ok(Rc::new(Variable::Number(
+            serde_json::Number::from_f64(median).unwrap_or_else(|| serde_json::Number::from(0)),
+        )))
+    }
+}
+
+// =============================================================================
+// percentile(array, p) -> number (pth percentile, p in 0-100)
+// =============================================================================
+
+define_function!(
+    PercentileFn,
+    vec![ArgumentType::Array, ArgumentType::Number],
+    None
+);
+
+impl Function for PercentileFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let p = args[1].as_number().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected percentile value".to_owned()),
+            )
+        })?;
+
+        if !(0.0..=100.0).contains(&p) {
+            return Err(JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Percentile must be between 0 and 100".to_owned()),
+            ));
+        }
+
+        let mut numbers: Vec<f64> = arr.iter().filter_map(|v| v.as_number()).collect();
+
+        if numbers.is_empty() {
+            return Ok(Rc::new(Variable::Null));
+        }
+
+        numbers.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let len = numbers.len();
+        if len == 1 {
+            return Ok(Rc::new(Variable::Number(
+                serde_json::Number::from_f64(numbers[0])
+                    .unwrap_or_else(|| serde_json::Number::from(0)),
+            )));
+        }
+
+        // Linear interpolation method
+        let rank = (p / 100.0) * (len - 1) as f64;
+        let lower_idx = rank.floor() as usize;
+        let upper_idx = rank.ceil() as usize;
+        let fraction = rank - lower_idx as f64;
+
+        let result = if lower_idx == upper_idx {
+            numbers[lower_idx]
+        } else {
+            numbers[lower_idx] * (1.0 - fraction) + numbers[upper_idx] * fraction
+        };
+
+        Ok(Rc::new(Variable::Number(
+            serde_json::Number::from_f64(result).unwrap_or_else(|| serde_json::Number::from(0)),
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2795,5 +3313,411 @@ mod tests {
             query("names[*] | map(&title(trim(@)), @)", &data).unwrap(),
             r#"["Alice","Bob","Carol"]"#
         );
+    }
+
+    // =========================================================================
+    // first() tests
+    // =========================================================================
+
+    #[test]
+    fn test_first_basic() {
+        let data = json!({"items": [1, 2, 3]});
+        assert_eq!(query("first(items)", &data).unwrap(), "1");
+    }
+
+    #[test]
+    fn test_first_empty_array() {
+        let data = json!({"items": []});
+        assert_eq!(query("first(items)", &data).unwrap(), "null");
+    }
+
+    #[test]
+    fn test_first_strings() {
+        let data = json!({"items": ["a", "b", "c"]});
+        assert_eq!(query("first(items)", &data).unwrap(), r#""a""#);
+    }
+
+    #[test]
+    fn test_first_objects() {
+        let data = json!({"items": [{"id": 1}, {"id": 2}]});
+        assert_eq!(query("first(items)", &data).unwrap(), r#"{"id":1}"#);
+    }
+
+    // =========================================================================
+    // last() tests
+    // =========================================================================
+
+    #[test]
+    fn test_last_basic() {
+        let data = json!({"items": [1, 2, 3]});
+        assert_eq!(query("last(items)", &data).unwrap(), "3");
+    }
+
+    #[test]
+    fn test_last_empty_array() {
+        let data = json!({"items": []});
+        assert_eq!(query("last(items)", &data).unwrap(), "null");
+    }
+
+    #[test]
+    fn test_last_strings() {
+        let data = json!({"items": ["a", "b", "c"]});
+        assert_eq!(query("last(items)", &data).unwrap(), r#""c""#);
+    }
+
+    #[test]
+    fn test_last_single_element() {
+        let data = json!({"items": [42]});
+        assert_eq!(query("last(items)", &data).unwrap(), "42");
+    }
+
+    // =========================================================================
+    // group_by() tests
+    // =========================================================================
+
+    #[test]
+    fn test_group_by_basic() {
+        let data = json!([
+            {"name": "Alice", "role": "admin"},
+            {"name": "Bob", "role": "user"},
+            {"name": "Carol", "role": "admin"}
+        ]);
+        let result = query("group_by(@, 'role')", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["admin"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["user"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_group_by_numbers() {
+        let data = json!([
+            {"name": "A", "score": 10},
+            {"name": "B", "score": 20},
+            {"name": "C", "score": 10}
+        ]);
+        let result = query("group_by(@, 'score')", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["10"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["20"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_group_by_missing_field() {
+        let data = json!([
+            {"name": "Alice", "role": "admin"},
+            {"name": "Bob"}
+        ]);
+        let result = query("group_by(@, 'role')", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["admin"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["null"].as_array().unwrap().len(), 1);
+    }
+
+    // =========================================================================
+    // pick() tests
+    // =========================================================================
+
+    #[test]
+    fn test_pick_basic() {
+        let data = json!({"name": "Alice", "age": 30, "email": "alice@example.com"});
+        let result = query("pick(@, ['name', 'age'])", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["name"], "Alice");
+        assert_eq!(parsed["age"], 30);
+        assert!(parsed.get("email").is_none());
+    }
+
+    #[test]
+    fn test_pick_nonexistent_keys() {
+        let data = json!({"name": "Alice", "age": 30});
+        let result = query("pick(@, ['name', 'missing'])", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["name"], "Alice");
+        assert!(parsed.get("missing").is_none());
+    }
+
+    #[test]
+    fn test_pick_empty_keys() {
+        let data = json!({"name": "Alice", "age": 30, "keys": []});
+        assert_eq!(query("pick(@, keys)", &data).unwrap(), "{}");
+    }
+
+    // =========================================================================
+    // omit() tests
+    // =========================================================================
+
+    #[test]
+    fn test_omit_basic() {
+        let data = json!({"name": "Alice", "age": 30, "password": "secret"});
+        let result = query("omit(@, ['password'])", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["name"], "Alice");
+        assert_eq!(parsed["age"], 30);
+        assert!(parsed.get("password").is_none());
+    }
+
+    #[test]
+    fn test_omit_multiple_keys() {
+        let data = json!({"a": 1, "b": 2, "c": 3, "d": 4});
+        let result = query("omit(@, ['b', 'd'])", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], 1);
+        assert_eq!(parsed["c"], 3);
+        assert!(parsed.get("b").is_none());
+        assert!(parsed.get("d").is_none());
+    }
+
+    #[test]
+    fn test_omit_nonexistent_keys() {
+        let data = json!({"name": "Alice"});
+        let result = query("omit(@, ['missing'])", &data).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["name"], "Alice");
+    }
+
+    // =========================================================================
+    // difference() tests
+    // =========================================================================
+
+    #[test]
+    fn test_difference_basic() {
+        let data = json!({"a": [1, 2, 3, 4], "b": [2, 4]});
+        assert_eq!(query("difference(a, b)", &data).unwrap(), "[1,3]");
+    }
+
+    #[test]
+    fn test_difference_strings() {
+        let data = json!({"a": ["x", "y", "z"], "b": ["y"]});
+        assert_eq!(query("difference(a, b)", &data).unwrap(), r#"["x","z"]"#);
+    }
+
+    #[test]
+    fn test_difference_no_overlap() {
+        let data = json!({"a": [1, 2], "b": [3, 4]});
+        assert_eq!(query("difference(a, b)", &data).unwrap(), "[1,2]");
+    }
+
+    #[test]
+    fn test_difference_complete_overlap() {
+        let data = json!({"a": [1, 2], "b": [1, 2]});
+        assert_eq!(query("difference(a, b)", &data).unwrap(), "[]");
+    }
+
+    // =========================================================================
+    // intersection() tests
+    // =========================================================================
+
+    #[test]
+    fn test_intersection_basic() {
+        let data = json!({"a": [1, 2, 3], "b": [2, 3, 4]});
+        assert_eq!(query("intersection(a, b)", &data).unwrap(), "[2,3]");
+    }
+
+    #[test]
+    fn test_intersection_strings() {
+        let data = json!({"a": ["x", "y", "z"], "b": ["y", "z", "w"]});
+        assert_eq!(query("intersection(a, b)", &data).unwrap(), r#"["y","z"]"#);
+    }
+
+    #[test]
+    fn test_intersection_no_overlap() {
+        let data = json!({"a": [1, 2], "b": [3, 4]});
+        assert_eq!(query("intersection(a, b)", &data).unwrap(), "[]");
+    }
+
+    #[test]
+    fn test_intersection_duplicates() {
+        let data = json!({"a": [1, 1, 2, 2], "b": [1, 2, 2]});
+        // Should return unique intersection
+        assert_eq!(query("intersection(a, b)", &data).unwrap(), "[1,2]");
+    }
+
+    // =========================================================================
+    // union() tests
+    // =========================================================================
+
+    #[test]
+    fn test_union_basic() {
+        let data = json!({"a": [1, 2], "b": [2, 3]});
+        assert_eq!(query("union(a, b)", &data).unwrap(), "[1,2,3]");
+    }
+
+    #[test]
+    fn test_union_strings() {
+        let data = json!({"a": ["x", "y"], "b": ["y", "z"]});
+        assert_eq!(query("union(a, b)", &data).unwrap(), r#"["x","y","z"]"#);
+    }
+
+    #[test]
+    fn test_union_no_overlap() {
+        let data = json!({"a": [1, 2], "b": [3, 4]});
+        assert_eq!(query("union(a, b)", &data).unwrap(), "[1,2,3,4]");
+    }
+
+    #[test]
+    fn test_union_complete_overlap() {
+        let data = json!({"a": [1, 2], "b": [1, 2]});
+        assert_eq!(query("union(a, b)", &data).unwrap(), "[1,2]");
+    }
+
+    // =========================================================================
+    // if() tests
+    // =========================================================================
+
+    #[test]
+    fn test_if_true_condition() {
+        let data = json!({"active": true});
+        assert_eq!(query("if(active, 'yes', 'no')", &data).unwrap(), r#""yes""#);
+    }
+
+    #[test]
+    fn test_if_false_condition() {
+        let data = json!({"active": false});
+        assert_eq!(query("if(active, 'yes', 'no')", &data).unwrap(), r#""no""#);
+    }
+
+    #[test]
+    fn test_if_null_is_falsy() {
+        let data = json!({"value": null});
+        assert_eq!(
+            query("if(value, 'has value', 'empty')", &data).unwrap(),
+            r#""empty""#
+        );
+    }
+
+    #[test]
+    fn test_if_string_is_truthy() {
+        let data = json!({"name": "Alice"});
+        assert_eq!(
+            query("if(name, 'has name', 'no name')", &data).unwrap(),
+            r#""has name""#
+        );
+    }
+
+    #[test]
+    fn test_if_number_is_truthy() {
+        let data = json!({"count": 0});
+        // 0 is truthy in JMESPath (only false and null are falsy)
+        assert_eq!(
+            query("if(count, 'has count', 'no count')", &data).unwrap(),
+            r#""has count""#
+        );
+    }
+
+    #[test]
+    fn test_if_with_comparison() {
+        let data = json!({"age": 25});
+        assert_eq!(
+            query("if(age > `18`, 'adult', 'minor')", &data).unwrap(),
+            r#""adult""#
+        );
+    }
+
+    #[test]
+    fn test_if_nested() {
+        let data = json!({"score": 85});
+        assert_eq!(
+            query("if(score >= `90`, 'A', if(score >= `80`, 'B', 'C'))", &data).unwrap(),
+            r#""B""#
+        );
+    }
+
+    // =========================================================================
+    // median() tests
+    // =========================================================================
+
+    #[test]
+    fn test_median_odd_count() {
+        let data = json!({"nums": [1, 3, 5, 7, 9]});
+        assert_eq!(query("median(nums)", &data).unwrap(), "5.0");
+    }
+
+    #[test]
+    fn test_median_even_count() {
+        let data = json!({"nums": [1, 2, 3, 4]});
+        assert_eq!(query("median(nums)", &data).unwrap(), "2.5");
+    }
+
+    #[test]
+    fn test_median_single_element() {
+        let data = json!({"nums": [42]});
+        assert_eq!(query("median(nums)", &data).unwrap(), "42.0");
+    }
+
+    #[test]
+    fn test_median_unsorted() {
+        let data = json!({"nums": [5, 1, 9, 3, 7]});
+        assert_eq!(query("median(nums)", &data).unwrap(), "5.0");
+    }
+
+    #[test]
+    fn test_median_empty() {
+        let data = json!({"nums": []});
+        assert_eq!(query("median(nums)", &data).unwrap(), "null");
+    }
+
+    #[test]
+    fn test_median_with_floats() {
+        let data = json!({"nums": [1.5, 2.5, 3.5]});
+        assert_eq!(query("median(nums)", &data).unwrap(), "2.5");
+    }
+
+    // =========================================================================
+    // percentile() tests
+    // =========================================================================
+
+    #[test]
+    fn test_percentile_50th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5]});
+        // 50th percentile is median
+        assert_eq!(query("percentile(nums, `50`)", &data).unwrap(), "3.0");
+    }
+
+    #[test]
+    fn test_percentile_0th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5]});
+        assert_eq!(query("percentile(nums, `0`)", &data).unwrap(), "1.0");
+    }
+
+    #[test]
+    fn test_percentile_100th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5]});
+        assert_eq!(query("percentile(nums, `100`)", &data).unwrap(), "5.0");
+    }
+
+    #[test]
+    fn test_percentile_25th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5]});
+        // Linear interpolation: rank = 0.25 * 4 = 1.0, so index 1 = 2.0
+        assert_eq!(query("percentile(nums, `25`)", &data).unwrap(), "2.0");
+    }
+
+    #[test]
+    fn test_percentile_75th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5]});
+        // Linear interpolation: rank = 0.75 * 4 = 3.0, so index 3 = 4.0
+        assert_eq!(query("percentile(nums, `75`)", &data).unwrap(), "4.0");
+    }
+
+    #[test]
+    fn test_percentile_95th() {
+        let data = json!({"nums": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]});
+        // rank = 0.95 * 9 = 8.55, interpolate between index 8 (9) and 9 (10)
+        // 9 * 0.45 + 10 * 0.55 = 4.05 + 5.5 = 9.55
+        let result = query("percentile(nums, `95`)", &data).unwrap();
+        let value: f64 = result.parse().unwrap();
+        assert!((value - 9.55).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_percentile_empty() {
+        let data = json!({"nums": []});
+        assert_eq!(query("percentile(nums, `50`)", &data).unwrap(), "null");
+    }
+
+    #[test]
+    fn test_percentile_single_element() {
+        let data = json!({"nums": [42]});
+        assert_eq!(query("percentile(nums, `99`)", &data).unwrap(), "42.0");
     }
 }

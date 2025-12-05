@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 50 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 61 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -460,7 +460,7 @@ redis> JSON.JMESPATH doc "concat(parts, '-')"
 "\"a-b-c\""
 ```
 
-### Array Functions (11)
+### Array Functions (17)
 
 #### `unique(array) -> array`
 Remove duplicate values, preserving order.
@@ -570,7 +570,64 @@ redis> JSON.JMESPATH doc "find_index(arr, 'b')"
 "1"
 ```
 
-### Object Functions (2)
+#### `first(array) -> any`
+Get first element of array, or null if empty.
+
+```bash
+redis> JSON.SET doc $ '{"items": [1, 2, 3]}'
+redis> JSON.JMESPATH doc "first(items)"
+"1"
+
+redis> JSON.JMESPATH doc "first([])"  # Empty array
+"null"
+```
+
+#### `last(array) -> any`
+Get last element of array, or null if empty.
+
+```bash
+redis> JSON.SET doc $ '{"items": [1, 2, 3]}'
+redis> JSON.JMESPATH doc "last(items)"
+"3"
+```
+
+#### `difference(array1, array2) -> array`
+Set difference: elements in array1 that are not in array2.
+
+```bash
+redis> JSON.SET doc $ '{"a": [1, 2, 3, 4], "b": [2, 4]}'
+redis> JSON.JMESPATH doc "difference(a, b)"
+"[1,3]"
+```
+
+#### `intersection(array1, array2) -> array`
+Set intersection: elements present in both arrays.
+
+```bash
+redis> JSON.SET doc $ '{"a": [1, 2, 3], "b": [2, 3, 4]}'
+redis> JSON.JMESPATH doc "intersection(a, b)"
+"[2,3]"
+```
+
+#### `union(array1, array2) -> array`
+Set union: unique elements from both arrays.
+
+```bash
+redis> JSON.SET doc $ '{"a": [1, 2], "b": [2, 3]}'
+redis> JSON.JMESPATH doc "union(a, b)"
+"[1,2,3]"
+```
+
+#### `group_by(array, field) -> object`
+Group array of objects by a field value.
+
+```bash
+redis> JSON.SET doc $ '[{"name":"Alice","role":"admin"},{"name":"Bob","role":"user"},{"name":"Carol","role":"admin"}]'
+redis> JSON.JMESPATH doc "group_by(@, 'role')"
+"{\"admin\":[{\"name\":\"Alice\",\"role\":\"admin\"},{\"name\":\"Carol\",\"role\":\"admin\"}],\"user\":[{\"name\":\"Bob\",\"role\":\"user\"}]}"
+```
+
+### Object Functions (4)
 
 #### `entries(object) -> array`
 Convert object to array of `{key, value}` objects.
@@ -590,7 +647,25 @@ redis> JSON.JMESPATH doc "from_entries(@)"
 "{\"a\":1,\"b\":2}"
 ```
 
-### Math Functions (9)
+#### `pick(object, keys) -> object`
+Select only specified keys from an object.
+
+```bash
+redis> JSON.SET doc $ '{"name": "Alice", "age": 30, "email": "alice@example.com", "password": "secret"}'
+redis> JSON.JMESPATH doc "pick(@, ['name', 'email'])"
+"{\"email\":\"alice@example.com\",\"name\":\"Alice\"}"
+```
+
+#### `omit(object, keys) -> object`
+Exclude specified keys from an object.
+
+```bash
+redis> JSON.SET doc $ '{"name": "Alice", "age": 30, "password": "secret"}'
+redis> JSON.JMESPATH doc "omit(@, ['password'])"
+"{\"age\":30,\"name\":\"Alice\"}"
+```
+
+### Math/Statistics Functions (11)
 
 #### `round(number, precision?) -> number`
 Round to specified decimal places (default 0).
@@ -674,6 +749,31 @@ Constrain number to range.
 redis> JSON.SET doc $ '{"n": 15}'
 redis> JSON.JMESPATH doc "clamp(n, `0`, `10`)"
 "10.0"
+```
+
+#### `median(array) -> number`
+Calculate median of numeric array.
+
+```bash
+redis> JSON.SET doc $ '{"scores": [1, 3, 5, 7, 9]}'
+redis> JSON.JMESPATH doc "median(scores)"
+"5.0"
+
+redis> JSON.SET doc $ '{"scores": [1, 2, 3, 4]}'
+redis> JSON.JMESPATH doc "median(scores)"
+"2.5"
+```
+
+#### `percentile(array, p) -> number`
+Calculate pth percentile (0-100) using linear interpolation.
+
+```bash
+redis> JSON.SET doc $ '{"latencies": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}'
+redis> JSON.JMESPATH doc "percentile(latencies, `95`)"
+"95.5"
+
+redis> JSON.JMESPATH doc "percentile(latencies, `50`)"
+"55.0"
 ```
 
 ### Type Functions (10)
@@ -772,7 +872,7 @@ redis> JSON.JMESPATH doc "is_null(n)"
 "true"
 ```
 
-### Utility Functions (3)
+### Utility/Conditional Functions (4)
 
 #### `now() -> number`
 Returns current Unix timestamp in seconds.
@@ -802,6 +902,26 @@ redis> JSON.JMESPATH doc "default(name, 'Unknown')"
 
 redis> JSON.JMESPATH doc "default(role, 'guest')"
 "\"admin\""
+```
+
+#### `if(condition, then, else) -> any`
+Ternary conditional. Returns `then` if condition is truthy, otherwise `else`.
+In JMESPath, only `false` and `null` are falsy; everything else (including 0 and empty strings) is truthy.
+
+```bash
+redis> JSON.SET doc $ '{"age": 25}'
+redis> JSON.JMESPATH doc "if(age >= `18`, 'adult', 'minor')"
+"\"adult\""
+
+# Nested conditionals for grade calculation
+redis> JSON.SET doc $ '{"score": 85}'
+redis> JSON.JMESPATH doc "if(score >= `90`, 'A', if(score >= `80`, 'B', if(score >= `70`, 'C', 'F')))"
+"\"B\""
+
+# With comparison expressions
+redis> JSON.SET doc $ '{"items": [1, 2, 3]}'
+redis> JSON.JMESPATH doc "if(length(items) > `0`, first(items), 'empty')"
+"1"
 ```
 
 ---
@@ -1035,20 +1155,20 @@ items[?is_number(@)]
 ### Custom String Functions (15)
 `lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`
 
-### Custom Array Functions (11)
-`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`
+### Custom Array Functions (17)
+`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`
 
-### Custom Object Functions (2)
-`entries`, `from_entries`
+### Custom Object Functions (4)
+`entries`, `from_entries`, `pick`, `omit`
 
-### Custom Math Functions (9)
-`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`
+### Custom Math/Statistics Functions (11)
+`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`
 
 ### Custom Type Functions (10)
 `to_string`, `to_number`, `to_boolean`, `type_of`, `is_string`, `is_number`, `is_boolean`, `is_array`, `is_object`, `is_null`
 
-### Custom Utility Functions (3)
-`now`, `now_ms`, `default`
+### Custom Utility/Conditional Functions (4)
+`now`, `now_ms`, `default`, `if`
 
 ---
 
@@ -1087,8 +1207,6 @@ The following functions are being considered for future implementation. Contribu
 ### Array Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `first(arr)` | First element (null if empty) | `first(items)` |
-| `last(arr)` | Last element (null if empty) | `last(items)` |
 | `nth(arr, n)` | Every nth element | `nth(items, 2)` → every 2nd |
 | `interleave(arr1, arr2)` | Alternate elements | `interleave([1,2], [a,b])` → `[1,a,2,b]` |
 | `partition(arr, size)` | Split into n equal parts | `partition(items, 3)` |
@@ -1096,18 +1214,12 @@ The following functions are being considered for future implementation. Contribu
 | `shuffle(arr, seed?)` | Deterministic shuffle | `shuffle(items, 42)` |
 | `sample(arr, n, seed?)` | Random sample | `sample(items, 5)` |
 | `frequencies(arr)` | Count occurrences | `frequencies(tags)` → `{a: 2, b: 1}` |
-| `group_by(arr, &expr)` | Group by expression | `group_by(users, &role)` |
 | `index_by(arr, &expr)` | Create lookup object | `index_by(users, &id)` |
-| `difference(arr1, arr2)` | Set difference | `difference([1,2,3], [2])` → `[1,3]` |
-| `intersection(arr1, arr2)` | Set intersection | `intersection([1,2], [2,3])` → `[2]` |
-| `union(arr1, arr2)` | Set union | `union([1,2], [2,3])` → `[1,2,3]` |
 | `cartesian(arr1, arr2)` | Cartesian product | `cartesian([1,2], [a,b])` |
 
 ### Object Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `pick(obj, keys)` | Select specific keys | `pick(user, ['name', 'email'])` |
-| `omit(obj, keys)` | Exclude specific keys | `omit(user, ['password'])` |
 | `rename_keys(obj, map)` | Rename object keys | `rename_keys(obj, {old: 'new'})` |
 | `deep_merge(obj1, obj2)` | Recursive merge | `deep_merge(defaults, config)` |
 | `flatten_keys(obj, sep?)` | Flatten nested object | `flatten_keys({a: {b: 1}})` → `{"a.b": 1}` |
@@ -1121,11 +1233,9 @@ The following functions are being considered for future implementation. Contribu
 ### Math/Statistics Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `median(arr)` | Median value | `median(scores)` |
 | `mode(arr)` | Most frequent value | `mode(ratings)` |
 | `stddev(arr)` | Standard deviation | `stddev(measurements)` |
 | `variance(arr)` | Variance | `variance(measurements)` |
-| `percentile(arr, p)` | Nth percentile | `percentile(times, 95)` |
 | `sin(n)`, `cos(n)`, `tan(n)` | Trigonometry | `sin(angle)` |
 | `random(min?, max?)` | Random number | `random(1, 100)` |
 | `sign(n)` | Sign (-1, 0, 1) | `sign(balance)` |
@@ -1165,7 +1275,6 @@ The following functions are being considered for future implementation. Contribu
 ### Conditional/Logic Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `if(cond, then, else)` | Ternary conditional | `if(age >= 18, 'adult', 'minor')` |
 | `coalesce(...)` | First non-null (variadic) | `coalesce(a, b, c, 'default')` |
 | `switch(val, cases, default)` | Switch/case | `switch(status, {1: 'ok', 2: 'err'}, 'unknown')` |
 | `all(arr, &expr)` | All match predicate | `all(items, &@ > 0)` |
