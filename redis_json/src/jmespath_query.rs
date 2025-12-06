@@ -1073,6 +1073,711 @@ mod tests {
     }
 
     // =========================================================================
+    // Tier 4: Trigonometric functions tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_sin() {
+        let data = json!({"angle": 0});
+        let result = query("sin(angle)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+
+        // sin(pi/2) = 1
+        let data = json!({"angle": 1.5707963267948966});
+        let result = query("sin(angle)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fn_cos() {
+        let data = json!({"angle": 0});
+        let result = query("cos(angle)", &data, &default_format()).unwrap();
+        assert_eq!(result, "1.0");
+
+        // cos(pi) = -1
+        let data = json!({"angle": 3.141592653589793});
+        let result = query("cos(angle)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - (-1.0)).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fn_tan() {
+        let data = json!({"angle": 0});
+        let result = query("tan(angle)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+
+        // tan(pi/4) = 1
+        let data = json!({"angle": 0.7853981633974483});
+        let result = query("tan(angle)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fn_asin() {
+        // asin(0) = 0
+        let data = json!({"val": 0});
+        let result = query("asin(val)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+
+        // asin(1) = pi/2
+        let data = json!({"val": 1});
+        let result = query("asin(val)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 1.5707963267948966).abs() < 0.0001);
+
+        // asin out of domain returns null
+        let data = json!({"val": 2});
+        let result = query("asin(val)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_fn_acos() {
+        // acos(1) = 0
+        let data = json!({"val": 1});
+        let result = query("acos(val)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+
+        // acos(0) = pi/2
+        let data = json!({"val": 0});
+        let result = query("acos(val)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 1.5707963267948966).abs() < 0.0001);
+
+        // acos out of domain returns null
+        let data = json!({"val": 2});
+        let result = query("acos(val)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_fn_atan() {
+        // atan(0) = 0
+        let data = json!({"val": 0});
+        let result = query("atan(val)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+
+        // atan(1) = pi/4
+        let data = json!({"val": 1});
+        let result = query("atan(val)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 0.7853981633974483).abs() < 0.0001);
+    }
+
+    // =========================================================================
+    // Tier 4: Sign function tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_sign() {
+        let data = json!({"pos": 42, "neg": -17, "zero": 0});
+
+        let result = query("sign(pos)", &data, &default_format()).unwrap();
+        assert_eq!(result, "1");
+
+        let result = query("sign(neg)", &data, &default_format()).unwrap();
+        assert_eq!(result, "-1");
+
+        let result = query("sign(zero)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0");
+
+        // Float values
+        let data = json!({"f": -3.14});
+        let result = query("sign(f)", &data, &default_format()).unwrap();
+        assert_eq!(result, "-1");
+    }
+
+    // =========================================================================
+    // Tier 4: Random/UUID functions tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_random() {
+        let data = json!({});
+        let result = query("random()", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!(val >= 0.0 && val < 1.0);
+
+        // With range
+        let result = query("random(`1`, `10`)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!(val >= 1.0 && val < 10.0);
+    }
+
+    #[test]
+    fn test_fn_uuid() {
+        let data = json!({});
+        let result = query("uuid()", &data, &default_format()).unwrap();
+        // Remove quotes
+        let uuid_str = result.trim_matches('"');
+        // UUID v4 format: 8-4-4-4-12 hex chars with dashes
+        assert_eq!(uuid_str.len(), 36);
+        assert_eq!(uuid_str.chars().filter(|c| *c == '-').count(), 4);
+    }
+
+    // =========================================================================
+    // Tier 4: Hex encoding tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_hex_encode() {
+        let data = json!({"s": "hello"});
+        let result = query("hex_encode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""68656c6c6f""#);
+
+        let data = json!({"s": ""});
+        let result = query("hex_encode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""""#);
+    }
+
+    #[test]
+    fn test_fn_hex_decode() {
+        let data = json!({"s": "68656c6c6f"});
+        let result = query("hex_decode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello""#);
+
+        // Invalid hex returns null
+        let data = json!({"s": "not-hex"});
+        let result = query("hex_decode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    // =========================================================================
+    // Tier 4: String functions tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_truncate() {
+        let data = json!({"s": "hello world"});
+
+        // Truncate with ellipsis
+        let result = query("truncate(s, `5`)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""he...""#);
+
+        // Custom suffix
+        let result = query(r#"truncate(s, `8`, `"--"`)"#, &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello --""#);
+
+        // No truncation needed
+        let result = query("truncate(s, `50`)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello world""#);
+    }
+
+    #[test]
+    fn test_fn_trim_left() {
+        let data = json!({"s": "   hello"});
+        let result = query("trim_left(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello""#);
+
+        let data = json!({"s": "hello"});
+        let result = query("trim_left(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello""#);
+    }
+
+    #[test]
+    fn test_fn_trim_right() {
+        let data = json!({"s": "hello   "});
+        let result = query("trim_right(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello""#);
+
+        let data = json!({"s": "hello"});
+        let result = query("trim_right(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello""#);
+    }
+
+    // =========================================================================
+    // Tier 4: Validation functions tests
+    // =========================================================================
+
+    #[test]
+    fn test_fn_is_empty() {
+        // Empty string
+        let data = json!({"s": ""});
+        let result = query("is_empty(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Non-empty string
+        let data = json!({"s": "hello"});
+        let result = query("is_empty(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "false");
+
+        // Empty array
+        let data = json!({"arr": []});
+        let result = query("is_empty(arr)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Non-empty array
+        let data = json!({"arr": [1, 2]});
+        let result = query("is_empty(arr)", &data, &default_format()).unwrap();
+        assert_eq!(result, "false");
+
+        // Empty object
+        let data = json!({"obj": {}});
+        let result = query("is_empty(obj)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Non-empty object
+        let data = json!({"obj": {"a": 1}});
+        let result = query("is_empty(obj)", &data, &default_format()).unwrap();
+        assert_eq!(result, "false");
+
+        // Null is empty
+        let data = json!({"n": null});
+        let result = query("is_empty(n)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+    }
+
+    #[test]
+    fn test_fn_is_blank() {
+        // Empty string is blank
+        let data = json!({"s": ""});
+        let result = query("is_blank(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Whitespace only is blank
+        let data = json!({"s": "   "});
+        let result = query("is_blank(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Tabs/newlines are blank
+        let data = json!({"s": " \t\n "});
+        let result = query("is_blank(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Non-blank string
+        let data = json!({"s": "  hello  "});
+        let result = query("is_blank(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "false");
+
+        // Non-string returns null
+        let data = json!({"n": 42});
+        let result = query("is_blank(n)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_fn_is_json() {
+        // Valid JSON
+        let data = json!({"s": r#"{"a": 1}"#});
+        let result = query("is_json(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Valid JSON array
+        let data = json!({"s": "[1, 2, 3]"});
+        let result = query("is_json(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "true");
+
+        // Invalid JSON
+        let data = json!({"s": "{not json}"});
+        let result = query("is_json(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "false");
+
+        // Non-string returns null
+        let data = json!({"n": 42});
+        let result = query("is_json(n)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    // =========================================================================
+    // Tier 5: Additional math functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_atan2() {
+        let data = json!({"y": 1, "x": 1});
+        let result = query("atan2(y, x)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 0.7853981633974483).abs() < 0.0001); // pi/4
+
+        let data = json!({"y": 0, "x": 1});
+        let result = query("atan2(y, x)", &data, &default_format()).unwrap();
+        assert_eq!(result, "0.0");
+    }
+
+    #[test]
+    fn test_fn_deg_to_rad() {
+        let data = json!({"deg": 180});
+        let result = query("deg_to_rad(deg)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - std::f64::consts::PI).abs() < 0.0001);
+
+        let data = json!({"deg": 90});
+        let result = query("deg_to_rad(deg)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - std::f64::consts::FRAC_PI_2).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_fn_rad_to_deg() {
+        let data = json!({"rad": 3.141592653589793});
+        let result = query("rad_to_deg(rad)", &data, &default_format()).unwrap();
+        let val: f64 = result.parse().unwrap();
+        assert!((val - 180.0).abs() < 0.0001);
+    }
+
+    // =========================================================================
+    // Tier 5: Array functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_nth() {
+        let data = json!({"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]});
+        // Every 2nd element (indices 0, 2, 4, 6, 8)
+        let result = query("nth(arr, `2`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[1,3,5,7,9]");
+
+        // Every 3rd element
+        let result = query("nth(arr, `3`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[1,4,7,10]");
+    }
+
+    #[test]
+    fn test_fn_interleave() {
+        let data = json!({"a": [1, 2, 3], "b": ["a", "b", "c"]});
+        let result = query("interleave(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"[1,"a",2,"b",3,"c"]"#);
+
+        // Unequal lengths
+        let data = json!({"a": [1, 2], "b": ["a", "b", "c", "d"]});
+        let result = query("interleave(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"[1,"a",2,"b","c","d"]"#);
+    }
+
+    #[test]
+    fn test_fn_rotate() {
+        let data = json!({"arr": [1, 2, 3, 4, 5]});
+        // Rotate left by 2
+        let result = query("rotate(arr, `2`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[3,4,5,1,2]");
+
+        // Rotate right (negative)
+        let result = query("rotate(arr, `-1`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[5,1,2,3,4]");
+    }
+
+    #[test]
+    fn test_fn_partition() {
+        let data = json!({"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]});
+        // Split into 3 parts
+        let result = query("partition(arr, `3`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[[1,2,3,4],[5,6,7],[8,9,10]]");
+
+        // Split into 2 parts
+        let result = query("partition(arr, `2`)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[[1,2,3,4,5],[6,7,8,9,10]]");
+    }
+
+    // =========================================================================
+    // Tier 5: Object functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_invert() {
+        let data = json!({"a": 1, "b": 2, "c": 3});
+        let result = query("invert(@)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"{"1":"a","2":"b","3":"c"}"#);
+    }
+
+    #[test]
+    fn test_fn_rename_keys() {
+        let data = json!({"obj": {"old_name": 1, "keep": 2}, "map": {"old_name": "new_name"}});
+        let result = query("rename_keys(obj, map)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"{"keep":2,"new_name":1}"#);
+    }
+
+    #[test]
+    fn test_fn_flatten_keys() {
+        let data = json!({"a": {"b": {"c": 1}}, "d": 2});
+        let result = query("flatten_keys(@)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"{"a.b.c":1,"d":2}"#);
+    }
+
+    #[test]
+    fn test_fn_unflatten_keys() {
+        let data = json!({"a.b.c": 1, "a.b.d": 2, "e": 3});
+        let result = query("unflatten_keys(@)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"{"a":{"b":{"c":1,"d":2}},"e":3}"#);
+    }
+
+    // =========================================================================
+    // Tier 5: Encoding functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_json_encode() {
+        let data = json!({"obj": {"a": 1, "b": "hello"}});
+        let result = query("json_encode(obj)", &data, &default_format()).unwrap();
+        // Result is a JSON string containing the encoded object
+        // The output will be escaped since it's a string containing JSON
+        assert!(result.contains("a") && result.contains("1"));
+        assert!(result.contains("b") && result.contains("hello"));
+    }
+
+    #[test]
+    fn test_fn_json_decode() {
+        let data = json!({"s": "{\"a\":1,\"b\":2}"});
+        let result = query("json_decode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"{"a":1,"b":2}"#);
+
+        // Invalid JSON returns null
+        let data = json!({"s": "not json"});
+        let result = query("json_decode(s)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    // =========================================================================
+    // Tier 5: Utility functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_path_join() {
+        let data = json!({"parts": ["home", "user", "file.txt"]});
+        let result = query("path_join(parts)", &data, &default_format()).unwrap();
+        assert!(result.contains("home") && result.contains("user") && result.contains("file.txt"));
+    }
+
+    #[test]
+    fn test_fn_coalesce() {
+        let data = json!({"a": null, "b": null, "c": "found", "d": "also"});
+        let result = query("coalesce(a, b, c, d)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#""found""#);
+
+        // All null
+        let data = json!({"a": null, "b": null});
+        let result = query("coalesce(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+
+        // First is non-null
+        let data = json!({"a": 1, "b": 2});
+        let result = query("coalesce(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, "1");
+    }
+
+    // =========================================================================
+    // Tier 6: Regex functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_regex_match() {
+        let data = json!({"email": "user@example.com"});
+        let result = query(
+            r#"regex_match(email, `"^[^@]+@[^@]+\\.[^@]+$"`)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert_eq!(result, "true");
+
+        let data = json!({"email": "not-an-email"});
+        let result = query(
+            r#"regex_match(email, `"^[^@]+@[^@]+\\.[^@]+$"`)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert_eq!(result, "false");
+    }
+
+    #[test]
+    fn test_fn_regex_extract() {
+        let data = json!({"url": "https://example.com/path"});
+        let result = query(
+            r#"regex_extract(url, `"https?://([^/]+)(.*)"`)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert!(result.contains("example.com"));
+        assert!(result.contains("/path"));
+
+        // No match returns null
+        let data = json!({"s": "hello"});
+        let result = query(r#"regex_extract(s, `"\\d+"`)"#, &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_fn_regex_replace() {
+        let data = json!({"s": "hello 123 world 456"});
+        let result = query(
+            r#"regex_replace(s, `"\\d+"`, `"NUM"`)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert_eq!(result, r#""hello NUM world NUM""#);
+
+        // Replace with capture group reference
+        let data = json!({"s": "hello world"});
+        let result = query(
+            r#"regex_replace(s, `"(\\w+)"`, `"[$1]"`)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert_eq!(result, r#""[hello] [world]""#);
+    }
+
+    // =========================================================================
+    // Tier 6: String functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_wrap() {
+        let data = json!({"s": "the quick brown fox jumps over the lazy dog"});
+        let result = query("wrap(s, `10`)", &data, &default_format()).unwrap();
+        // Should have newlines
+        assert!(result.contains("\\n"));
+    }
+
+    #[test]
+    fn test_fn_format() {
+        let data = json!({"name": "Alice", "age": 30});
+        let result = query(
+            r#"format(`"{0} is {1} years old"`, name, age)"#,
+            &data,
+            &default_format(),
+        )
+        .unwrap();
+        assert_eq!(result, r#""Alice is 30 years old""#);
+
+        // Multiple same placeholders
+        let data = json!({"x": "hello"});
+        let result = query(r#"format(`"{0} {0}"`, x)"#, &data, &default_format()).unwrap();
+        assert_eq!(result, r#""hello hello""#);
+    }
+
+    // =========================================================================
+    // Tier 6: Array functions
+    // =========================================================================
+
+    #[test]
+    fn test_fn_shuffle_with_seed() {
+        let data = json!({"arr": [1, 2, 3, 4, 5]});
+        // With seed, should be deterministic
+        let result1 = query("shuffle(arr, `42`)", &data, &default_format()).unwrap();
+        let result2 = query("shuffle(arr, `42`)", &data, &default_format()).unwrap();
+        assert_eq!(result1, result2);
+
+        // Different seed, different result
+        let result3 = query("shuffle(arr, `999`)", &data, &default_format()).unwrap();
+        assert_ne!(result1, result3);
+    }
+
+    #[test]
+    fn test_fn_sample_with_seed() {
+        let data = json!({"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]});
+        // Sample 3 elements with seed
+        let result = query("sample(arr, `3`, `42`)", &data, &default_format()).unwrap();
+        // Should be an array with 3 elements
+        let parsed: Vec<i32> = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed.len(), 3);
+
+        // Deterministic with same seed
+        let result2 = query("sample(arr, `3`, `42`)", &data, &default_format()).unwrap();
+        assert_eq!(result, result2);
+    }
+
+    #[test]
+    fn test_fn_cartesian() {
+        let data = json!({"a": [1, 2], "b": ["x", "y"]});
+        let result = query("cartesian(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, r#"[[1,"x"],[1,"y"],[2,"x"],[2,"y"]]"#);
+
+        // Empty array
+        let data = json!({"a": [], "b": [1, 2]});
+        let result = query("cartesian(a, b)", &data, &default_format()).unwrap();
+        assert_eq!(result, "[]");
+    }
+
+    // =========================================================================
+    // URL parsing
+    // =========================================================================
+
+    #[test]
+    fn test_fn_url_parse() {
+        // Full URL with all components
+        let data = json!({"url": "https://user:pass@example.com:8080/path/to/resource?foo=bar&baz=qux#section1"});
+        let result = query("url_parse(url)", &data, &default_format()).unwrap();
+        assert!(result.contains("\"scheme\":\"https\""));
+        assert!(result.contains("\"host\":\"example.com\""));
+        assert!(result.contains("\"port\":8080"));
+        assert!(result.contains("\"path\":\"/path/to/resource\""));
+        assert!(result.contains("\"query\":\"foo=bar&baz=qux\""));
+        assert!(result.contains("\"fragment\":\"section1\""));
+        assert!(result.contains("\"username\":\"user\""));
+        assert!(result.contains("\"password\":\"pass\""));
+
+        // Access specific component
+        let result = query("url_parse(url).host", &data, &default_format()).unwrap();
+        assert_eq!(result, "\"example.com\"");
+
+        let result = query("url_parse(url).port", &data, &default_format()).unwrap();
+        assert_eq!(result, "8080");
+
+        // Simple URL without optional components
+        let data = json!({"url": "https://example.com/path"});
+        let result = query("url_parse(url)", &data, &default_format()).unwrap();
+        assert!(result.contains("\"scheme\":\"https\""));
+        assert!(result.contains("\"host\":\"example.com\""));
+        assert!(result.contains("\"port\":null"));
+        assert!(result.contains("\"query\":null"));
+        assert!(result.contains("\"fragment\":null"));
+
+        // Invalid URL returns null
+        let data = json!({"url": "not a valid url"});
+        let result = query("url_parse(url)", &data, &default_format()).unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_fn_url_parse_origin() {
+        let data = json!({"url": "https://example.com:8080/path"});
+        let result = query("url_parse(url).origin", &data, &default_format()).unwrap();
+        assert_eq!(result, "\"https://example.com:8080\"");
+
+        // Without explicit port
+        let data = json!({"url": "https://example.com/path"});
+        let result = query("url_parse(url).origin", &data, &default_format()).unwrap();
+        assert_eq!(result, "\"https://example.com\"");
+    }
+
+    // =========================================================================
+    // Time functions with fallback
+    // =========================================================================
+
+    #[test]
+    fn test_fn_now_fallback() {
+        let data = json!({});
+        // With fallback - deterministic
+        let result = query("now(`1700000000`)", &data, &default_format()).unwrap();
+        let ts: f64 = result.parse().unwrap();
+        assert_eq!(ts, 1700000000.0);
+
+        // Without fallback - returns current time (non-deterministic, just check it's a number)
+        let result = query("now()", &data, &default_format()).unwrap();
+        let ts: f64 = result.parse().unwrap();
+        assert!(ts > 1700000000.0); // Should be after Nov 2023
+    }
+
+    #[test]
+    fn test_fn_now_ms_fallback() {
+        let data = json!({});
+        // With fallback - deterministic
+        let result = query("now_ms(`1700000000000`)", &data, &default_format()).unwrap();
+        let ts: f64 = result.parse().unwrap();
+        assert_eq!(ts, 1700000000000.0);
+
+        // Without fallback - returns current time in ms
+        let result = query("now_ms()", &data, &default_format()).unwrap();
+        let ts: f64 = result.parse().unwrap();
+        assert!(ts > 1700000000000.0); // Should be after Nov 2023
+    }
+
+    // =========================================================================
     // RESP3 conversion tests
     // =========================================================================
 

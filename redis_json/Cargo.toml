@@ -33,14 +33,8 @@ redis-module ={ git="https://github.com/RedisLabsModules/redismodule-rs", tag="v
 redis-module-macros = { git="https://github.com/RedisLabsModules/redismodule-rs", tag="v2.1.3" }
 itertools = "0.13"
 jmespath = { version = "0.4", optional = true }
+jmespath_extensions = { version = "0.2", optional = true }
 json_path = { path = "../json_path" }
-md-5 = { version = "0.10", optional = true }
-sha1 = { version = "0.10", optional = true }
-sha2 = { version = "0.10", optional = true }
-crc32fast = { version = "1.4", optional = true }
-base64 = { version = "0.22", optional = true }
-urlencoding = { version = "2.1", optional = true }
-regex = { version = "1.10", optional = true }
 linkme = "0.3"
 lazy_static = "1"
 
@@ -48,7 +42,7 @@ lazy_static = "1"
 default = ["jmespath"]
 as-library = []
 thread_safe = ["ijson/thread_safe"]
-jmespath = ["dep:jmespath", "dep:md-5", "dep:sha1", "dep:sha2", "dep:crc32fast", "dep:base64", "dep:urlencoding", "dep:regex"]
+jmespath = ["dep:jmespath", "dep:jmespath_extensions"]
 
 [dev-dependencies]
 criterion = "0.5"

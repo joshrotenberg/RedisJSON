@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 88 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 129 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -255,7 +255,7 @@ redis> JSON.JMESPATH users "sort_by(@, &age) | [0].name"
 | **Filters** | `[?expr]` | `$[?(@.expr)]` |
 | **Pipes** | `expr1 \| expr2` | Not supported |
 | **Multiselect** | `{a: f1, b: f2}` | Not supported |
-| **Functions** | 26 built-in + 50 custom | Limited |
+| **Functions** | 26 built-in + 129 custom | Limited |
 | **Mutations** | Read-only | Read/Write |
 
 ## Standard JMESPath Functions (26)
@@ -310,11 +310,11 @@ These functions are part of the official JMESPath specification and work identic
 
 ---
 
-## Custom Redis Functions (88)
+## Custom Redis Functions (129)
 
 These functions extend JMESPath with capabilities specific to RedisJSON. **Note:** Queries using these functions are not portable to other JMESPath implementations.
 
-### String Functions (18)
+### String Functions (27)
 
 #### `lower(string) -> string`
 Convert string to lowercase.
@@ -460,7 +460,116 @@ redis> JSON.JMESPATH doc "concat(parts, '-')"
 "\"a-b-c\""
 ```
 
-### Array Functions (18)
+#### `truncate(string, length, suffix?) -> string`
+Truncate a string to the specified length, adding a suffix (default "...") if truncated.
+
+```bash
+redis> JSON.SET doc $ '{"s": "hello world"}'
+redis> JSON.JMESPATH doc "truncate(s, `5`)"
+"\"he...\""
+
+# Custom suffix
+redis> JSON.JMESPATH doc "truncate(s, `8`, `\"--\"`)"
+"\"hello --\""
+
+# No truncation needed
+redis> JSON.JMESPATH doc "truncate(s, `50`)"
+"\"hello world\""
+```
+
+#### `trim_start(string) -> string`
+Remove leading whitespace from a string.
+
+```bash
+redis> JSON.SET doc $ '{"s": "   hello"}'
+redis> JSON.JMESPATH doc "trim_start(s)"
+"\"hello\""
+```
+
+#### `trim_end(string) -> string`
+Remove trailing whitespace from a string.
+
+```bash
+redis> JSON.SET doc $ '{"s": "hello   "}'
+redis> JSON.JMESPATH doc "trim_end(s)"
+"\"hello\""
+```
+
+#### `regex_match(string, pattern) -> boolean`
+Check if a string matches a regular expression pattern. Returns null if the pattern is invalid.
+
+```bash
+redis> JSON.SET doc $ '{"email": "user@example.com"}'
+redis> JSON.JMESPATH doc "regex_match(email, '^[^@]+@[^@]+\\.[^@]+$')"
+"true"
+
+redis> JSON.SET doc $ '{"phone": "555-1234"}'
+redis> JSON.JMESPATH doc "regex_match(phone, '^\\d{3}-\\d{4}$')"
+"true"
+```
+
+#### `regex_extract(string, pattern) -> array`
+Extract all matches from a string using a regular expression. Returns an array of matches, or null if the pattern is invalid.
+
+```bash
+redis> JSON.SET doc $ '{"text": "Call 555-1234 or 555-5678"}'
+redis> JSON.JMESPATH doc "regex_extract(text, '\\d{3}-\\d{4}')"
+"[\"555-1234\",\"555-5678\"]"
+
+redis> JSON.SET doc $ '{"log": "ERROR: file not found, ERROR: access denied"}'
+redis> JSON.JMESPATH doc "regex_extract(log, 'ERROR: [^,]+')"
+"[\"ERROR: file not found\",\"ERROR: access denied\"]"
+```
+
+#### `regex_replace(string, pattern, replacement) -> string`
+Replace all matches of a regular expression with a replacement string. Returns null if the pattern is invalid.
+
+```bash
+redis> JSON.SET doc $ '{"text": "Hello World"}'
+redis> JSON.JMESPATH doc "regex_replace(text, 'World', 'Redis')"
+"\"Hello Redis\""
+
+redis> JSON.SET doc $ '{"phone": "555-123-4567"}'
+redis> JSON.JMESPATH doc "regex_replace(phone, '-', '.')"
+"\"555.123.4567\""
+
+# Redact sensitive data
+redis> JSON.SET doc $ '{"data": "SSN: 123-45-6789"}'
+redis> JSON.JMESPATH doc "regex_replace(data, '\\d{3}-\\d{2}-\\d{4}', 'XXX-XX-XXXX')"
+"\"SSN: XXX-XX-XXXX\""
+```
+
+#### `wrap(string, width) -> string`
+Word-wrap text at the specified width, preserving words when possible.
+
+```bash
+redis> JSON.SET doc $ '{"text": "The quick brown fox jumps over the lazy dog"}'
+redis> JSON.JMESPATH doc "wrap(text, `20`)"
+"\"The quick brown fox\\njumps over the lazy\\ndog\""
+
+redis> JSON.SET doc $ '{"desc": "Short"}'
+redis> JSON.JMESPATH doc "wrap(desc, `80`)"
+"\"Short\""
+```
+
+#### `format(template, ...args) -> string`
+String interpolation using `{0}`, `{1}`, etc. as placeholders. Supports variadic arguments.
+
+```bash
+redis> JSON.SET doc $ '{"name": "Alice", "age": 30}'
+redis> JSON.JMESPATH doc "format('{0} is {1} years old', name, age)"
+"\"Alice is 30 years old\""
+
+redis> JSON.SET doc $ '{"x": 10, "y": 20}'
+redis> JSON.JMESPATH doc "format('Point({0}, {1})', x, y)"
+"\"Point(10, 20)\""
+
+redis> JSON.SET doc $ '{"user": "bob", "action": "login", "time": "10:30"}'
+redis> JSON.JMESPATH doc "format('[{2}] {0}: {1}', user, action, time)"
+"\"[10:30] bob: login\""
+```
+
+### Array Functions (26)
 
 #### `unique(array) -> array`
 Remove duplicate values, preserving order.
@@ -641,7 +750,109 @@ redis> JSON.JMESPATH doc "frequencies(scores)"
 "{\"1\":3,\"2\":2,\"3\":1}"
 ```
 
-### Object Functions (5)
+#### `nth(array, n) -> array`
+Select every nth element from an array.
+
+```bash
+redis> JSON.SET doc $ '{"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}'
+redis> JSON.JMESPATH doc "nth(arr, `2`)"
+"[1,3,5,7,9]"
+
+redis> JSON.JMESPATH doc "nth(arr, `3`)"
+"[1,4,7,10]"
+```
+
+#### `interleave(array1, array2) -> array`
+Alternate elements from two arrays. Remaining elements from the longer array are appended.
+
+```bash
+redis> JSON.SET doc $ '{"a": [1, 2, 3], "b": ["a", "b", "c"]}'
+redis> JSON.JMESPATH doc "interleave(a, b)"
+"[1,\"a\",2,\"b\",3,\"c\"]"
+
+redis> JSON.SET doc $ '{"a": [1, 2], "b": ["x", "y", "z", "w"]}'
+redis> JSON.JMESPATH doc "interleave(a, b)"
+"[1,\"x\",2,\"y\",\"z\",\"w\"]"
+```
+
+#### `rotate(array, n) -> array`
+Rotate array elements by n positions. Positive n rotates left, negative rotates right.
+
+```bash
+redis> JSON.SET doc $ '{"arr": [1, 2, 3, 4, 5]}'
+redis> JSON.JMESPATH doc "rotate(arr, `2`)"
+"[3,4,5,1,2]"
+
+redis> JSON.JMESPATH doc "rotate(arr, `-1`)"
+"[5,1,2,3,4]"
+```
+
+#### `partition(array, n) -> array`
+Split array into n equal-sized parts. Last part may be smaller.
+
+```bash
+redis> JSON.SET doc $ '{"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}'
+redis> JSON.JMESPATH doc "partition(arr, `3`)"
+"[[1,2,3,4],[5,6,7],[8,9,10]]"
+
+redis> JSON.JMESPATH doc "partition(arr, `4`)"
+"[[1,2,3],[4,5,6],[7,8],[9,10]]"
+```
+
+#### `shuffle(array, seed?) -> array`
+Shuffle array elements. Optionally provide a seed for deterministic shuffling (important for replication).
+
+```bash
+redis> JSON.SET doc $ '{"arr": [1, 2, 3, 4, 5]}'
+# Deterministic shuffle with seed
+redis> JSON.JMESPATH doc "shuffle(arr, `42`)"
+"[3,5,1,2,4]"
+
+# Same seed produces same result
+redis> JSON.JMESPATH doc "shuffle(arr, `42`)"
+"[3,5,1,2,4]"
+
+# Different seed produces different result
+redis> JSON.JMESPATH doc "shuffle(arr, `123`)"
+"[2,4,1,5,3]"
+```
+
+**Note:** When using without a seed, results are non-deterministic and may differ across replicas.
+
+#### `sample(array, n, seed?) -> array`
+Randomly select n elements from an array without replacement. Optionally provide a seed for deterministic sampling.
+
+```bash
+redis> JSON.SET doc $ '{"arr": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}'
+# Deterministic sample with seed
+redis> JSON.JMESPATH doc "sample(arr, `3`, `42`)"
+"[6,1,4]"
+
+# Same seed produces same result
+redis> JSON.JMESPATH doc "sample(arr, `3`, `42`)"
+"[6,1,4]"
+
+# Requesting more elements than available returns all elements (shuffled)
+redis> JSON.JMESPATH doc "sample(arr, `20`, `42`)"
+"[6,1,4,2,10,3,7,5,9,8]"
+```
+
+**Note:** When using without a seed, results are non-deterministic and may differ across replicas.
+
+#### `cartesian(array1, array2) -> array`
+Compute the Cartesian product of two arrays. Returns an array of pairs.
+
+```bash
+redis> JSON.SET doc $ '{"a": [1, 2], "b": ["x", "y"]}'
+redis> JSON.JMESPATH doc "cartesian(a, b)"
+"[[1,\"x\"],[1,\"y\"],[2,\"x\"],[2,\"y\"]]"
+
+redis> JSON.SET doc $ '{"sizes": ["S", "M", "L"], "colors": ["red", "blue"]}'
+redis> JSON.JMESPATH doc "cartesian(sizes, colors)"
+"[[\"S\",\"red\"],[\"S\",\"blue\"],[\"M\",\"red\"],[\"M\",\"blue\"],[\"L\",\"red\"],[\"L\",\"blue\"]]"
+```
+
+### Object Functions (9)
 
 #### `entries(object) -> array`
 Convert object to array of `{key, value}` objects.
@@ -696,7 +907,58 @@ redis> JSON.JMESPATH doc "deep_merge(a, b)"
 "{\"x\":1,\"y\":2}"
 ```
 
-### Math/Statistics Functions (11)
+#### `invert(object) -> object`
+Swap keys and values. Values must be strings or numbers.
+
+```bash
+redis> JSON.SET doc $ '{"a": "1", "b": "2", "c": "3"}'
+redis> JSON.JMESPATH doc "invert(@)"
+"{\"1\":\"a\",\"2\":\"b\",\"3\":\"c\"}"
+
+redis> JSON.SET doc $ '{"red": "#ff0000", "green": "#00ff00"}'
+redis> JSON.JMESPATH doc "invert(@)"
+"{\"#00ff00\":\"green\",\"#ff0000\":\"red\"}"
+```
+
+#### `rename_keys(object, mapping) -> object`
+Rename object keys according to a mapping object. Keys not in the mapping are preserved.
+
+```bash
+redis> JSON.SET doc $ '{"old_name": "Alice", "old_age": 30}'
+redis> JSON.JMESPATH doc "rename_keys(@, {old_name: 'name', old_age: 'age'})"
+"{\"age\":30,\"name\":\"Alice\"}"
+
+redis> JSON.SET doc $ '{"firstName": "Bob", "lastName": "Smith", "email": "bob@example.com"}'
+redis> JSON.JMESPATH doc "rename_keys(@, {firstName: 'first_name', lastName: 'last_name'})"
+"{\"email\":\"bob@example.com\",\"first_name\":\"Bob\",\"last_name\":\"Smith\"}"
+```
+
+#### `flatten_keys(object, separator?) -> object`
+Flatten a nested object into a single-level object with compound keys. Separator defaults to ".".
+
+```bash
+redis> JSON.SET doc $ '{"user": {"name": "Alice", "address": {"city": "NYC", "zip": "10001"}}}'
+redis> JSON.JMESPATH doc "flatten_keys(@)"
+"{\"user.address.city\":\"NYC\",\"user.address.zip\":\"10001\",\"user.name\":\"Alice\"}"
+
+redis> JSON.JMESPATH doc "flatten_keys(@, '/')"
+"{\"user/address/city\":\"NYC\",\"user/address/zip\":\"10001\",\"user/name\":\"Alice\"}"
+```
+
+#### `unflatten_keys(object, separator?) -> object`
+Expand a flat object with compound keys into a nested object. Separator defaults to ".".
+
+```bash
+redis> JSON.SET doc $ '{"user.name": "Alice", "user.address.city": "NYC"}'
+redis> JSON.JMESPATH doc "unflatten_keys(@)"
+"{\"user\":{\"address\":{\"city\":\"NYC\"},\"name\":\"Alice\"}}"
+
+redis> JSON.SET doc $ '{"user/name": "Bob", "user/email": "bob@example.com"}'
+redis> JSON.JMESPATH doc "unflatten_keys(@, '/')"
+"{\"user\":{\"email\":\"bob@example.com\",\"name\":\"Bob\"}}"
+```
+
+### Math/Statistics Functions (23)
 
 #### `round(number, precision?) -> number`
 Round to specified decimal places (default 0).
@@ -805,6 +1067,142 @@ redis> JSON.JMESPATH doc "percentile(latencies, `95`)"
 
 redis> JSON.JMESPATH doc "percentile(latencies, `50`)"
 "55.0"
+```
+
+#### `sin(number) -> number`
+Calculate sine of angle in radians.
+
+```bash
+redis> JSON.SET doc $ '{"angle": 0}'
+redis> JSON.JMESPATH doc "sin(angle)"
+"0.0"
+
+redis> JSON.SET doc $ '{"angle": 1.5707963267948966}'  # pi/2
+redis> JSON.JMESPATH doc "sin(angle)"
+"1.0"
+```
+
+#### `cos(number) -> number`
+Calculate cosine of angle in radians.
+
+```bash
+redis> JSON.SET doc $ '{"angle": 0}'
+redis> JSON.JMESPATH doc "cos(angle)"
+"1.0"
+
+redis> JSON.SET doc $ '{"angle": 3.141592653589793}'  # pi
+redis> JSON.JMESPATH doc "cos(angle)"
+"-1.0"
+```
+
+#### `tan(number) -> number`
+Calculate tangent of angle in radians.
+
+```bash
+redis> JSON.SET doc $ '{"angle": 0}'
+redis> JSON.JMESPATH doc "tan(angle)"
+"0.0"
+
+redis> JSON.SET doc $ '{"angle": 0.7853981633974483}'  # pi/4
+redis> JSON.JMESPATH doc "tan(angle)"
+"1.0"
+```
+
+#### `asin(number) -> number`
+Calculate arc sine (inverse sine). Input must be between -1 and 1, returns radians. Returns null for out-of-domain inputs.
+
+```bash
+redis> JSON.SET doc $ '{"val": 0}'
+redis> JSON.JMESPATH doc "asin(val)"
+"0.0"
+
+redis> JSON.SET doc $ '{"val": 1}'
+redis> JSON.JMESPATH doc "asin(val)"
+"1.5707963267948966"  # pi/2
+
+redis> JSON.SET doc $ '{"val": 2}'  # out of domain
+redis> JSON.JMESPATH doc "asin(val)"
+"null"
+```
+
+#### `acos(number) -> number`
+Calculate arc cosine (inverse cosine). Input must be between -1 and 1, returns radians. Returns null for out-of-domain inputs.
+
+```bash
+redis> JSON.SET doc $ '{"val": 1}'
+redis> JSON.JMESPATH doc "acos(val)"
+"0.0"
+
+redis> JSON.SET doc $ '{"val": 0}'
+redis> JSON.JMESPATH doc "acos(val)"
+"1.5707963267948966"  # pi/2
+```
+
+#### `atan(number) -> number`
+Calculate arc tangent (inverse tangent). Returns radians.
+
+```bash
+redis> JSON.SET doc $ '{"val": 0}'
+redis> JSON.JMESPATH doc "atan(val)"
+"0.0"
+
+redis> JSON.SET doc $ '{"val": 1}'
+redis> JSON.JMESPATH doc "atan(val)"
+"0.7853981633974483"  # pi/4
+```
+
+#### `sign(number) -> number`
+Return the sign of a number: -1 for negative, 0 for zero, 1 for positive.
+
+```bash
+redis> JSON.SET doc $ '{"pos": 42, "neg": -17, "zero": 0}'
+redis> JSON.JMESPATH doc "sign(pos)"
+"1"
+
+redis> JSON.JMESPATH doc "sign(neg)"
+"-1"
+
+redis> JSON.JMESPATH doc "sign(zero)"
+"0"
+```
+
+#### `atan2(y, x) -> number`
+Two-argument arctangent. Returns the angle in radians between the positive x-axis and the point (x, y).
+
+```bash
+redis> JSON.SET doc $ '{"y": 1, "x": 1}'
+redis> JSON.JMESPATH doc "atan2(y, x)"
+"0.7853981633974483"  # pi/4
+
+redis> JSON.SET doc $ '{"y": 0, "x": -1}'
+redis> JSON.JMESPATH doc "atan2(y, x)"
+"3.141592653589793"  # pi
+```
+
+#### `deg_to_rad(number) -> number`
+Convert degrees to radians.
+
+```bash
+redis> JSON.SET doc $ '{"angle": 180}'
+redis> JSON.JMESPATH doc "deg_to_rad(angle)"
+"3.141592653589793"
+
+redis> JSON.SET doc $ '{"angle": 90}'
+redis> JSON.JMESPATH doc "deg_to_rad(angle)"
+"1.5707963267948966"
+```
+
+#### `rad_to_deg(number) -> number`
+Convert radians to degrees.
+
+```bash
+redis> JSON.SET doc $ '{"angle": 3.141592653589793}'
+redis> JSON.JMESPATH doc "rad_to_deg(angle)"
+"180.0"
+
+redis> JSON.SET doc $ '{"angle": 1.5707963267948966}'
+redis> JSON.JMESPATH doc "rad_to_deg(angle)"
+"90.0"
 ```
 
 ### Type Functions (10)
@@ -941,7 +1339,7 @@ redis> JSON.JMESPATH doc "crc32(data)"
 "222957957"
 ```
 
-### Encoding Functions (2)
+### Encoding Functions (6)
 
 #### `base64_encode(string) -> string`
 Encode a string to base64.
@@ -969,6 +1367,59 @@ redis> JSON.JMESPATH doc "base64_decode(encoded)"
 redis> JSON.SET doc $ '{"data": "secret"}'
 redis> JSON.JMESPATH doc "base64_decode(base64_encode(data))"
 "\"secret\""
+```
+
+#### `hex_encode(string) -> string`
+Encode a string to hexadecimal.
+
+```bash
+redis> JSON.SET doc $ '{"data": "hello"}'
+redis> JSON.JMESPATH doc "hex_encode(data)"
+"\"68656c6c6f\""
+```
+
+#### `hex_decode(string) -> string`
+Decode a hexadecimal string. Returns null for invalid hex input.
+
+```bash
+redis> JSON.SET doc $ '{"hex": "68656c6c6f"}'
+redis> JSON.JMESPATH doc "hex_decode(hex)"
+"\"hello\""
+
+# Invalid hex returns null
+redis> JSON.SET doc $ '{"hex": "not-hex"}'
+redis> JSON.JMESPATH doc "hex_decode(hex)"
+"null"
+```
+
+#### `json_encode(any) -> string`
+Encode any value as a JSON string.
+
+```bash
+redis> JSON.SET doc $ '{"data": {"name": "Alice", "scores": [1, 2, 3]}}'
+redis> JSON.JMESPATH doc "json_encode(data)"
+"\"{\\\"name\\\":\\\"Alice\\\",\\\"scores\\\":[1,2,3]}\""
+
+redis> JSON.SET doc $ '{"arr": [1, 2, 3]}'
+redis> JSON.JMESPATH doc "json_encode(arr)"
+"\"[1,2,3]\""
+```
+
+#### `json_decode(string) -> any`
+Parse a JSON string into a value. Returns null for invalid JSON.
+
+```bash
+redis> JSON.SET doc $ '{"json_str": "{\"name\": \"Bob\", \"age\": 30}"}'
+redis> JSON.JMESPATH doc "json_decode(json_str)"
+"{\"age\":30,\"name\":\"Bob\"}"
+
+redis> JSON.JMESPATH doc "json_decode(json_str).name"
+"\"Bob\""
+
+# Invalid JSON returns null
+redis> JSON.SET doc $ '{"json_str": "not valid json"}'
+redis> JSON.JMESPATH doc "json_decode(json_str)"
+"null"
 ```
 
 ### String Case Aliases (3)
@@ -1096,7 +1547,7 @@ redis> JSON.JMESPATH doc "stddev(data)"
 "2.0"
 ```
 
-### Path Functions (3)
+### Path/URL Functions (5)
 
 #### `path_basename(string) -> string`
 Extract the filename from a path.
@@ -1129,7 +1580,52 @@ redis> JSON.JMESPATH doc "path_ext(p)"
 "\"\""
 ```
 
-### Validation Functions (5)
+#### `path_join(array, separator?) -> string`
+Join path segments with a separator. Separator defaults to "/".
+
+```bash
+redis> JSON.SET doc $ '{"parts": ["home", "user", "docs", "file.txt"]}'
+redis> JSON.JMESPATH doc "path_join(parts)"
+"\"home/user/docs/file.txt\""
+
+redis> JSON.JMESPATH doc "path_join(parts, '\\\\')"
+"\"home\\\\user\\\\docs\\\\file.txt\""
+
+redis> JSON.SET doc $ '{"dir": "var", "subdir": "log", "file": "app.log"}'
+redis> JSON.JMESPATH doc "path_join([dir, subdir, file])"
+"\"var/log/app.log\""
+```
+
+#### `url_parse(string) -> object`
+Parse a URL into its components. Returns an object with: `scheme`, `host`, `port`, `path`, `query`, `fragment`, `username`, `password`, and `origin`. Returns null for invalid URLs.
+
+```bash
+redis> JSON.SET doc $ '{"url": "https://user:pass@example.com:8080/path?query=1#section"}'
+redis> JSON.JMESPATH doc "url_parse(url)"
+"{\"scheme\":\"https\",\"host\":\"example.com\",\"port\":8080,\"path\":\"/path\",\"query\":\"query=1\",\"fragment\":\"section\",\"username\":\"user\",\"password\":\"pass\",\"origin\":\"https://example.com:8080\"}"
+
+# Access specific components
+redis> JSON.JMESPATH doc "url_parse(url).host"
+"\"example.com\""
+
+redis> JSON.JMESPATH doc "url_parse(url).port"
+"8080"
+
+# Simple URL (optional components are null)
+redis> JSON.SET doc $ '{"url": "https://example.com/path"}'
+redis> JSON.JMESPATH doc "url_parse(url).port"
+"null"
+
+redis> JSON.JMESPATH doc "url_parse(url).origin"
+"\"https://example.com\""
+
+# Invalid URL returns null
+redis> JSON.SET doc $ '{"url": "not a url"}'
+redis> JSON.JMESPATH doc "url_parse(url)"
+"null"
+```
+
+### Validation Functions (8)
 
 #### `is_email(string) -> boolean`
 Check if string is a valid email address format.
@@ -1192,25 +1688,90 @@ redis> JSON.JMESPATH doc "is_ipv6(ip)"
 "true"
 ```
 
-### Utility/Conditional Functions (4)
+#### `is_empty(any) -> boolean`
+Check if a value is empty. Returns true for: empty strings, empty arrays, empty objects, and null. Numbers and booleans return false.
 
-#### `now() -> number`
-Returns current Unix timestamp in seconds.
+```bash
+redis> JSON.SET doc $ '{"s": "", "arr": [], "obj": {}, "n": null}'
+redis> JSON.JMESPATH doc "is_empty(s)"
+"true"
+
+redis> JSON.JMESPATH doc "is_empty(arr)"
+"true"
+
+redis> JSON.JMESPATH doc "is_empty(obj)"
+"true"
+
+redis> JSON.SET doc $ '{"s": "hello", "arr": [1, 2]}'
+redis> JSON.JMESPATH doc "is_empty(s)"
+"false"
+```
+
+#### `is_blank(string) -> boolean`
+Check if a string is empty or contains only whitespace. Returns null for non-strings.
+
+```bash
+redis> JSON.SET doc $ '{"s": "   "}'
+redis> JSON.JMESPATH doc "is_blank(s)"
+"true"
+
+redis> JSON.SET doc $ '{"s": ""}'
+redis> JSON.JMESPATH doc "is_blank(s)"
+"true"
+
+redis> JSON.SET doc $ '{"s": "  hello  "}'
+redis> JSON.JMESPATH doc "is_blank(s)"
+"false"
+```
+
+#### `is_json(string) -> boolean`
+Check if a string contains valid JSON. Returns null for non-strings.
+
+```bash
+redis> JSON.SET doc $ '{"s": "{\"a\": 1}"}'
+redis> JSON.JMESPATH doc "is_json(s)"
+"true"
+
+redis> JSON.SET doc $ '{"s": "[1, 2, 3]"}'
+redis> JSON.JMESPATH doc "is_json(s)"
+"true"
+
+redis> JSON.SET doc $ '{"s": "{not json}"}'
+redis> JSON.JMESPATH doc "is_json(s)"
+"false"
+```
+
+### Utility/Conditional Functions (7)
+
+#### `now(fallback?) -> number`
+Returns current Unix timestamp in seconds. If a fallback value is provided, returns that instead (for deterministic behavior in replication scenarios).
 
 ```bash
 redis> JSON.SET doc $ '{"expires": 1700000000}'
 redis> JSON.JMESPATH doc "expires > now()"
 "true"  # or "false" depending on current time
+
+# With fallback for deterministic behavior
+redis> JSON.JMESPATH doc "now(`1700000000`)"
+"1700000000"
 ```
 
-#### `now_ms() -> number`
-Returns current Unix timestamp in milliseconds.
+**Note:** Without a fallback, this function is non-deterministic and may produce different values across replicas. Use a fallback when determinism is required.
+
+#### `now_ms(fallback?) -> number`
+Returns current Unix timestamp in milliseconds. If a fallback value is provided, returns that instead (for deterministic behavior in replication scenarios).
 
 ```bash
 redis> JSON.SET doc $ '{}'
 redis> JSON.JMESPATH doc "now_ms()"
 "1733417234567"  # example output
+
+# With fallback for deterministic behavior
+redis> JSON.JMESPATH doc "now_ms(`1733417234567`)"
+"1733417234567"
 ```
+
+**Note:** Without a fallback, this function is non-deterministic and may produce different values across replicas. Use a fallback when determinism is required.
 
 #### `default(value, fallback) -> value`
 Return fallback if value is null, otherwise return value.
@@ -1242,6 +1803,54 @@ redis> JSON.JMESPATH doc "if(score >= `90`, 'A', if(score >= `80`, 'B', if(score
 redis> JSON.SET doc $ '{"items": [1, 2, 3]}'
 redis> JSON.JMESPATH doc "if(length(items) > `0`, first(items), 'empty')"
 "1"
+```
+
+#### `random(min?, max?) -> number`
+Generate a random floating-point number. With no arguments, returns a value in [0, 1). With two arguments, returns a value in [min, max).
+
+**Note:** This function is non-deterministic and may produce different values across replicas.
+
+```bash
+redis> JSON.SET doc $ '{}'
+redis> JSON.JMESPATH doc "random()"
+"0.7234..."  # random value in [0, 1)
+
+redis> JSON.JMESPATH doc "random(`1`, `10`)"
+"5.234..."  # random value in [1, 10)
+```
+
+#### `uuid() -> string`
+Generate a random UUID v4 string.
+
+**Note:** This function is non-deterministic and may produce different values across replicas.
+
+```bash
+redis> JSON.SET doc $ '{}'
+redis> JSON.JMESPATH doc "uuid()"
+"\"550e8400-e29b-41d4-a716-446655440000\""
+```
+
+#### `coalesce(...args) -> any`
+Return the first non-null argument. Variadic function that accepts any number of arguments.
+
+```bash
+redis> JSON.SET doc $ '{"a": null, "b": null, "c": "found"}'
+redis> JSON.JMESPATH doc "coalesce(a, b, c)"
+"\"found\""
+
+redis> JSON.SET doc $ '{"primary": null, "secondary": "backup", "default": "fallback"}'
+redis> JSON.JMESPATH doc "coalesce(primary, secondary, default)"
+"\"backup\""
+
+# All null returns null
+redis> JSON.SET doc $ '{"a": null, "b": null}'
+redis> JSON.JMESPATH doc "coalesce(a, b)"
+"null"
+
+# With literal fallback
+redis> JSON.SET doc $ '{"config": null}'
+redis> JSON.JMESPATH doc "coalesce(config, `{\"timeout\": 30}`)"
+"{\"timeout\":30}"
 ```
 
 ---
@@ -1376,6 +1985,34 @@ redis> JSON.JMESPATH users "[0]" FORMAT EXPAND
 
 ---
 
+## Non-Deterministic Functions and Replication
+
+Some functions produce non-deterministic results, which can cause issues in Redis replication scenarios where the same command should produce identical results on primary and replica nodes.
+
+### Functions with Deterministic Fallbacks
+
+These functions are non-deterministic by default but accept an optional parameter for deterministic behavior:
+
+| Function | Non-deterministic | Deterministic |
+|----------|-------------------|---------------|
+| `now()` | `now()` | `now(\`1700000000\`)` |
+| `now_ms()` | `now_ms()` | `now_ms(\`1700000000000\`)` |
+| `shuffle(arr)` | `shuffle(arr)` | `shuffle(arr, \`42\`)` (seed) |
+| `sample(arr, n)` | `sample(arr, n)` | `sample(arr, n, \`42\`)` (seed) |
+
+### Always Non-Deterministic
+
+These functions always produce non-deterministic results:
+
+| Function | Notes |
+|----------|-------|
+| `random()` | Returns random float |
+| `uuid()` | Generates random UUID |
+
+**Important:** Since `JSON.JMESPATH` is a read-only command (it doesn't modify data), the primary concern is if your application logic depends on the result being identical across replicas. For most use cases where you're simply querying a replica, the non-determinism is acceptable.
+
+---
+
 ## Performance Considerations
 
 ### Expression Caching
@@ -1472,35 +2109,35 @@ items[?is_number(@)]
 ### Standard Functions (26)
 `abs`, `avg`, `ceil`, `contains`, `ends_with`, `floor`, `join`, `keys`, `length`, `map`, `max`, `max_by`, `merge`, `min`, `min_by`, `not_null`, `reverse`, `sort`, `sort_by`, `starts_with`, `sum`, `to_array`, `to_number`, `to_string`, `type`, `values`
 
-### Custom String Functions (23)
-`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`, `upper_case`, `lower_case`, `title_case`, `camel_case`, `snake_case`, `kebab_case`, `url_encode`, `url_decode`
+### Custom String Functions (27)
+`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`, `upper_case`, `lower_case`, `title_case`, `camel_case`, `snake_case`, `kebab_case`, `url_encode`, `url_decode`, `truncate`, `trim_start`, `trim_end`, `regex_match`, `regex_extract`, `regex_replace`, `wrap`, `format`
 
-### Custom Array Functions (19)
-`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`, `frequencies`, `mode`
+### Custom Array Functions (26)
+`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`, `frequencies`, `mode`, `nth`, `interleave`, `rotate`, `partition`, `shuffle`, `sample`, `cartesian`
 
-### Custom Object Functions (5)
-`entries`, `from_entries`, `pick`, `omit`, `deep_merge`
+### Custom Object Functions (9)
+`entries`, `from_entries`, `pick`, `omit`, `deep_merge`, `invert`, `rename_keys`, `flatten_keys`, `unflatten_keys`
 
-### Custom Math/Statistics Functions (13)
-`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`, `variance`, `stddev`
+### Custom Math/Statistics Functions (23)
+`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`, `variance`, `stddev`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sign`, `atan2`, `deg_to_rad`, `rad_to_deg`
 
 ### Custom Type Functions (10)
 `to_string`, `to_number`, `to_boolean`, `type_of`, `is_string`, `is_number`, `is_boolean`, `is_array`, `is_object`, `is_null`
 
-### Custom Utility/Conditional Functions (4)
-`now`, `now_ms`, `default`, `if`
+### Custom Utility/Conditional Functions (7)
+`now`, `now_ms`, `default`, `if`, `random`, `uuid`, `coalesce`
 
 ### Custom Hash/Checksum Functions (4)
 `md5`, `sha1`, `sha256`, `crc32`
 
-### Custom Encoding Functions (4)
-`base64_encode`, `base64_decode`, `url_encode`, `url_decode`
+### Custom Encoding Functions (8)
+`base64_encode`, `base64_decode`, `url_encode`, `url_decode`, `hex_encode`, `hex_decode`, `json_encode`, `json_decode`
 
-### Custom Path Functions (3)
-`path_basename`, `path_dirname`, `path_ext`
+### Custom Path/URL Functions (5)
+`path_basename`, `path_dirname`, `path_ext`, `path_join`, `url_parse`
 
-### Custom Validation Functions (5)
-`is_email`, `is_url`, `is_uuid`, `is_ipv4`, `is_ipv6`
+### Custom Validation Functions (8)
+`is_email`, `is_url`, `is_uuid`, `is_ipv4`, `is_ipv6`, `is_empty`, `is_blank`, `is_json`
 
 ---
 
@@ -1522,47 +2159,18 @@ items[?is_number(@)]
 
 The following functions are being considered for future implementation. Contributions welcome!
 
-### String Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `trim_start(s)` | Remove leading whitespace only | `trim_start("  hi")` → `"hi"` |
-| `trim_end(s)` | Remove trailing whitespace only | `trim_end("hi  ")` → `"hi"` |
-| `truncate(s, len, suffix?)` | Truncate with ellipsis | `truncate(title, 20, "...")` |
-| `wrap(s, width)` | Word-wrap text | `wrap(description, 80)` |
-| `match(s, regex)` | Regex match (returns bool) | `match(email, "^.+@.+$")` |
-| `extract(s, regex)` | Extract regex groups | `extract(url, "https?://([^/]+)")` |
-| `format(template, ...)` | String interpolation | `format("{0} is {1}", name, age)` |
-
 ### Array Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `nth(arr, n)` | Every nth element | `nth(items, 2)` → every 2nd |
-| `interleave(arr1, arr2)` | Alternate elements | `interleave([1,2], [a,b])` → `[1,a,2,b]` |
-| `partition(arr, size)` | Split into n equal parts | `partition(items, 3)` |
-| `rotate(arr, n)` | Rotate elements | `rotate([1,2,3], 1)` → `[2,3,1]` |
-| `shuffle(arr, seed?)` | Deterministic shuffle | `shuffle(items, 42)` |
-| `sample(arr, n, seed?)` | Random sample | `sample(items, 5)` |
 | `index_by(arr, &expr)` | Create lookup object | `index_by(users, &id)` |
-| `cartesian(arr1, arr2)` | Cartesian product | `cartesian([1,2], [a,b])` |
 
 ### Object Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `rename_keys(obj, map)` | Rename object keys | `rename_keys(obj, {old: 'new'})` |
-| `flatten_keys(obj, sep?)` | Flatten nested object | `flatten_keys({a: {b: 1}})` → `{"a.b": 1}` |
-| `unflatten_keys(obj, sep?)` | Unflatten object | `unflatten_keys({"a.b": 1})` → `{a: {b: 1}}` |
 | `map_values(obj, &expr)` | Transform all values | `map_values(prices, &round(@, 2))` |
 | `map_keys(obj, &expr)` | Transform all keys | `map_keys(obj, &lower(@))` |
 | `filter_keys(obj, &expr)` | Filter by key | `filter_keys(obj, &starts_with(@, 'user_'))` |
 | `filter_values(obj, &expr)` | Filter by value | `filter_values(obj, &@ != null)` |
-| `invert(obj)` | Swap keys and values | `invert({a: 1, b: 2})` → `{1: "a", 2: "b"}` |
-
-### Math/Statistics Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `sin(n)`, `cos(n)`, `tan(n)` | Trigonometry | `sin(angle)` |
-| `random(min?, max?)` | Random number | `random(1, 100)` |
-| `sign(n)` | Sign (-1, 0, 1) | `sign(balance)` |
 
 ### Date/Time Functions
 | Function | Description | Example |
@@ -1575,54 +2183,21 @@ The following functions are being considered for future implementation. Contribu
 | `start_of(ts, unit)` | Start of period | `start_of(ts, 'month')` |
 | `end_of(ts, unit)` | End of period | `end_of(ts, 'week')` |
 
-### Encoding Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `json_encode(any)` | Encode as JSON string | `json_encode(obj)` |
-| `json_decode(s)` | Parse JSON string | `json_decode(json_str)` |
-| `hex_encode(s)` | Encode to hex | `hex_encode(data)` |
-| `hex_decode(s)` | Decode from hex | `hex_decode(hex_str)` |
-
-### Hash/Crypto Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `uuid()` | Generate UUID v4 | `uuid()` |
-
 ### Conditional/Logic Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `coalesce(...)` | First non-null (variadic) | `coalesce(a, b, c, 'default')` |
 | `switch(val, cases, default)` | Switch/case | `switch(status, {1: 'ok', 2: 'err'}, 'unknown')` |
 | `all(arr, &expr)` | All match predicate | `all(items, &@ > 0)` |
 | `any(arr, &expr)` | Any matches predicate | `any(items, &@ > 100)` |
 | `none(arr, &expr)` | None match predicate | `none(items, &is_null(@))` |
 
-### Path/URL Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `path_join(...)` | Join path segments | `path_join(dir, subdir, file)` |
-| `url_parse(url)` | Parse URL components | `url_parse(link).host` |
-
-### Validation Functions
-| Function | Description | Example |
-|----------|-------------|---------|
-| `is_json(s)` | Valid JSON string | `is_json(payload)` |
-| `is_empty(x)` | Empty string/array/object | `is_empty(results)` |
-| `is_blank(s)` | Empty or whitespace only | `is_blank(input)` |
-
 ### Implementation Notes
 
 Some functions face technical limitations:
 
-- **Expression-based functions** (`group_by`, `all`, `any`, etc.): Require access to the JMESPath interpreter, which is not publicly exposed by the `jmespath` crate. Would require forking the crate or upstream changes.
-
-- **Regex functions** (`match`, `extract`): Would add the `regex` crate as a dependency. Consider feature-gating.
-
-- **Crypto functions**: Would add crypto dependencies. Consider feature-gating for security-conscious deployments.
+- **Expression-based functions** (`index_by`, `all`, `any`, `map_values`, etc.): Require access to the JMESPath interpreter, which is not publicly exposed by the `jmespath` crate. Would require forking the crate or upstream changes.
 
 - **Date functions**: Would benefit from the `chrono` crate for robust parsing/formatting.
-
-- **Random functions**: Need to consider determinism requirements for replication.
 
 ---
 
