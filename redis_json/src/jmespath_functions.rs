@@ -9,11 +9,11 @@
 
 //! Custom JMESPath functions for RedisJSON
 //!
-//! This module provides 72 Redis-specific extensions to JMESPath beyond the
+//! This module provides 88 Redis-specific extensions to JMESPath beyond the
 //! standard 26 built-in functions. These functions are registered with a
 //! custom Runtime and are available in all JSON.JMESPATH queries.
 //!
-//! ## String Functions (18)
+//! ## String Functions (23)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -35,8 +35,13 @@
 //! | `upper_case(string)` | Convert to uppercase (alias) |
 //! | `lower_case(string)` | Convert to lowercase (alias) |
 //! | `title_case(string)` | Title case conversion |
+//! | `camel_case(string)` | Convert to camelCase |
+//! | `snake_case(string)` | Convert to snake_case |
+//! | `kebab_case(string)` | Convert to kebab-case |
+//! | `url_encode(string)` | URL encode string |
+//! | `url_decode(string)` | URL decode string |
 //!
-//! ## Array Functions (17)
+//! ## Array Functions (19)
 //!
 //! | Function | Description |
 //! |----------|-------------|
@@ -58,6 +63,7 @@
 //! | `union(arr1, arr2)` | Set union |
 //! | `group_by(array, field)` | Group by field value |
 //! | `frequencies(array)` | Count occurrences |
+//! | `mode(array)` | Most frequent value |
 //!
 //! ## Object Functions (5)
 //!
@@ -84,6 +90,8 @@
 //! | `clamp(n, min, max)` | Constrain to range |
 //! | `median(array)` | Median value |
 //! | `percentile(array, p)` | Nth percentile (0-100) |
+//! | `variance(array)` | Population variance |
+//! | `stddev(array)` | Standard deviation |
 //!
 //! ## Type Functions (10)
 //!
@@ -118,12 +126,32 @@
 //! | `sha256(string)` | SHA-256 hash (hex) |
 //! | `crc32(string)` | CRC32 checksum (number) |
 //!
-//! ## Encoding Functions (2)
+//! ## Encoding Functions (4)
 //!
 //! | Function | Description |
 //! |----------|-------------|
 //! | `base64_encode(string)` | Base64 encode |
 //! | `base64_decode(string)` | Base64 decode |
+//! | `url_encode(string)` | URL encode |
+//! | `url_decode(string)` | URL decode |
+//!
+//! ## Path Functions (3)
+//!
+//! | Function | Description |
+//! |----------|-------------|
+//! | `path_basename(string)` | Get filename from path |
+//! | `path_dirname(string)` | Get directory from path |
+//! | `path_ext(string)` | Get file extension |
+//!
+//! ## Validation Functions (5)
+//!
+//! | Function | Description |
+//! |----------|-------------|
+//! | `is_email(string)` | Check if valid email |
+//! | `is_url(string)` | Check if valid URL |
+//! | `is_uuid(string)` | Check if valid UUID |
+//! | `is_ipv4(string)` | Check if valid IPv4 |
+//! | `is_ipv6(string)` | Check if valid IPv6 |
 //!
 //! ## Portability Note
 //!
@@ -146,6 +174,12 @@ use sha2::Sha256;
 
 // Base64 encoding
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
+
+// URL encoding
+use urlencoding;
+
+// Regex for validation
+use regex::Regex;
 
 /// Custom JMESPath runtime with Redis-specific functions.
 ///
@@ -251,6 +285,24 @@ pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     runtime.register_function("lower_case", Box::new(LowerCaseFn::new()));
     runtime.register_function("title_case", Box::new(TitleCaseFn::new()));
     runtime.register_function("deep_merge", Box::new(DeepMergeFn::new()));
+
+    // Register custom functions - Tier 3: URL encoding, case conversion, stats, paths, validation
+    runtime.register_function("url_encode", Box::new(UrlEncodeFn::new()));
+    runtime.register_function("url_decode", Box::new(UrlDecodeFn::new()));
+    runtime.register_function("camel_case", Box::new(CamelCaseFn::new()));
+    runtime.register_function("snake_case", Box::new(SnakeCaseFn::new()));
+    runtime.register_function("kebab_case", Box::new(KebabCaseFn::new()));
+    runtime.register_function("mode", Box::new(ModeFn::new()));
+    runtime.register_function("stddev", Box::new(StddevFn::new()));
+    runtime.register_function("variance", Box::new(VarianceFn::new()));
+    runtime.register_function("path_basename", Box::new(PathBasenameFn::new()));
+    runtime.register_function("path_dirname", Box::new(PathDirnameFn::new()));
+    runtime.register_function("path_ext", Box::new(PathExtFn::new()));
+    runtime.register_function("is_email", Box::new(IsEmailFn::new()));
+    runtime.register_function("is_url", Box::new(IsUrlFn::new()));
+    runtime.register_function("is_uuid", Box::new(IsUuidFn::new()));
+    runtime.register_function("is_ipv4", Box::new(IsIpv4Fn::new()));
+    runtime.register_function("is_ipv6", Box::new(IsIpv6Fn::new()));
 
     runtime
 });
@@ -2812,6 +2864,511 @@ impl Function for DeepMergeFn {
     }
 }
 
+// =============================================================================
+// TIER 3 FUNCTIONS: URL encoding, Case conversion, Statistics, Paths, Validation
+// =============================================================================
+
+// =============================================================================
+// url_encode(string) -> string
+// =============================================================================
+
+define_function!(UrlEncodeFn, vec![ArgumentType::String], None);
+
+impl Function for UrlEncodeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let encoded = urlencoding::encode(input);
+        Ok(Rc::new(Variable::String(encoded.into_owned())))
+    }
+}
+
+// =============================================================================
+// url_decode(string) -> string
+// =============================================================================
+
+define_function!(UrlDecodeFn, vec![ArgumentType::String], None);
+
+impl Function for UrlDecodeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let input = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        match urlencoding::decode(input) {
+            Ok(decoded) => Ok(Rc::new(Variable::String(decoded.into_owned()))),
+            Err(_) => Err(JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Invalid URL-encoded input".to_owned()),
+            )),
+        }
+    }
+}
+
+// =============================================================================
+// camel_case(string) -> string (helloWorld)
+// =============================================================================
+
+define_function!(CamelCaseFn, vec![ArgumentType::String], None);
+
+impl Function for CamelCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // Split on non-alphanumeric characters or uppercase letters
+        let mut result = String::new();
+        let mut capitalize_next = false;
+        let mut first_word = true;
+
+        for c in s.chars() {
+            if c.is_alphanumeric() {
+                if capitalize_next && !first_word {
+                    result.push(c.to_ascii_uppercase());
+                    capitalize_next = false;
+                } else {
+                    result.push(c.to_ascii_lowercase());
+                }
+                first_word = false;
+            } else {
+                capitalize_next = true;
+            }
+        }
+
+        Ok(Rc::new(Variable::String(result)))
+    }
+}
+
+// =============================================================================
+// snake_case(string) -> string (hello_world)
+// =============================================================================
+
+define_function!(SnakeCaseFn, vec![ArgumentType::String], None);
+
+impl Function for SnakeCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut result = String::new();
+        let mut prev_was_lower = false;
+
+        for c in s.chars() {
+            if c.is_uppercase() {
+                if prev_was_lower && !result.is_empty() {
+                    result.push('_');
+                }
+                result.push(c.to_ascii_lowercase());
+                prev_was_lower = false;
+            } else if c.is_alphanumeric() {
+                result.push(c.to_ascii_lowercase());
+                prev_was_lower = c.is_lowercase();
+            } else if !result.is_empty() && !result.ends_with('_') {
+                result.push('_');
+                prev_was_lower = false;
+            }
+        }
+
+        // Trim trailing underscore
+        if result.ends_with('_') {
+            result.pop();
+        }
+
+        Ok(Rc::new(Variable::String(result)))
+    }
+}
+
+// =============================================================================
+// kebab_case(string) -> string (hello-world)
+// =============================================================================
+
+define_function!(KebabCaseFn, vec![ArgumentType::String], None);
+
+impl Function for KebabCaseFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let mut result = String::new();
+        let mut prev_was_lower = false;
+
+        for c in s.chars() {
+            if c.is_uppercase() {
+                if prev_was_lower && !result.is_empty() {
+                    result.push('-');
+                }
+                result.push(c.to_ascii_lowercase());
+                prev_was_lower = false;
+            } else if c.is_alphanumeric() {
+                result.push(c.to_ascii_lowercase());
+                prev_was_lower = c.is_lowercase();
+            } else if !result.is_empty() && !result.ends_with('-') {
+                result.push('-');
+                prev_was_lower = false;
+            }
+        }
+
+        // Trim trailing hyphen
+        if result.ends_with('-') {
+            result.pop();
+        }
+
+        Ok(Rc::new(Variable::String(result)))
+    }
+}
+
+// =============================================================================
+// mode(array) -> any (most frequent value, or first if tie)
+// =============================================================================
+
+define_function!(ModeFn, vec![ArgumentType::Array], None);
+
+impl Function for ModeFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        if arr.is_empty() {
+            return Ok(Rc::new(Variable::Null));
+        }
+
+        let mut counts: std::collections::HashMap<String, (i64, Rcvar)> =
+            std::collections::HashMap::new();
+
+        for item in arr {
+            let key = serde_json::to_string(&**item).unwrap_or_default();
+            counts
+                .entry(key)
+                .and_modify(|(count, _)| *count += 1)
+                .or_insert((1, item.clone()));
+        }
+
+        let (_, (_, mode_value)) = counts
+            .into_iter()
+            .max_by_key(|(_, (count, _))| *count)
+            .unwrap();
+
+        Ok(mode_value)
+    }
+}
+
+// =============================================================================
+// variance(array) -> number (population variance)
+// =============================================================================
+
+define_function!(VarianceFn, vec![ArgumentType::Array], None);
+
+impl Function for VarianceFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let numbers: Vec<f64> = arr.iter().filter_map(|v| v.as_number()).collect();
+
+        if numbers.is_empty() {
+            return Ok(Rc::new(Variable::Null));
+        }
+
+        let mean = numbers.iter().sum::<f64>() / numbers.len() as f64;
+        let variance =
+            numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / numbers.len() as f64;
+
+        Ok(Rc::new(Variable::Number(
+            serde_json::Number::from_f64(variance).unwrap_or_else(|| serde_json::Number::from(0)),
+        )))
+    }
+}
+
+// =============================================================================
+// stddev(array) -> number (population standard deviation)
+// =============================================================================
+
+define_function!(StddevFn, vec![ArgumentType::Array], None);
+
+impl Function for StddevFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let arr = args[0].as_array().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected array argument".to_owned()),
+            )
+        })?;
+
+        let numbers: Vec<f64> = arr.iter().filter_map(|v| v.as_number()).collect();
+
+        if numbers.is_empty() {
+            return Ok(Rc::new(Variable::Null));
+        }
+
+        let mean = numbers.iter().sum::<f64>() / numbers.len() as f64;
+        let variance =
+            numbers.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / numbers.len() as f64;
+        let stddev = variance.sqrt();
+
+        Ok(Rc::new(Variable::Number(
+            serde_json::Number::from_f64(stddev).unwrap_or_else(|| serde_json::Number::from(0)),
+        )))
+    }
+}
+
+// =============================================================================
+// path_basename(string) -> string (filename from path)
+// =============================================================================
+
+define_function!(PathBasenameFn, vec![ArgumentType::String], None);
+
+impl Function for PathBasenameFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let path = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let basename = std::path::Path::new(path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        Ok(Rc::new(Variable::String(basename.to_string())))
+    }
+}
+
+// =============================================================================
+// path_dirname(string) -> string (directory from path)
+// =============================================================================
+
+define_function!(PathDirnameFn, vec![ArgumentType::String], None);
+
+impl Function for PathDirnameFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let path = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let dirname = std::path::Path::new(path)
+            .parent()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        Ok(Rc::new(Variable::String(dirname.to_string())))
+    }
+}
+
+// =============================================================================
+// path_ext(string) -> string (extension from path, with dot)
+// =============================================================================
+
+define_function!(PathExtFn, vec![ArgumentType::String], None);
+
+impl Function for PathExtFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let path = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| format!(".{}", s))
+            .unwrap_or_default();
+
+        Ok(Rc::new(Variable::String(ext)))
+    }
+}
+
+// =============================================================================
+// is_email(string) -> boolean
+// =============================================================================
+
+define_function!(IsEmailFn, vec![ArgumentType::String], None);
+
+impl Function for IsEmailFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // Simple but reasonable email regex
+        let email_re = Regex::new(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$").unwrap();
+        Ok(Rc::new(Variable::Bool(email_re.is_match(s))))
+    }
+}
+
+// =============================================================================
+// is_url(string) -> boolean
+// =============================================================================
+
+define_function!(IsUrlFn, vec![ArgumentType::String], None);
+
+impl Function for IsUrlFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // Simple URL regex
+        let url_re = Regex::new(r"^https?://[^\s/$.?#].[^\s]*$").unwrap();
+        Ok(Rc::new(Variable::Bool(url_re.is_match(s))))
+    }
+}
+
+// =============================================================================
+// is_uuid(string) -> boolean
+// =============================================================================
+
+define_function!(IsUuidFn, vec![ArgumentType::String], None);
+
+impl Function for IsUuidFn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // UUID v4 format (also accepts other versions)
+        let uuid_re = Regex::new(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        )
+        .unwrap();
+        Ok(Rc::new(Variable::Bool(uuid_re.is_match(s))))
+    }
+}
+
+// =============================================================================
+// is_ipv4(string) -> boolean
+// =============================================================================
+
+define_function!(IsIpv4Fn, vec![ArgumentType::String], None);
+
+impl Function for IsIpv4Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // Use standard library for accurate IPv4 validation
+        let is_valid = s.parse::<std::net::Ipv4Addr>().is_ok();
+        Ok(Rc::new(Variable::Bool(is_valid)))
+    }
+}
+
+// =============================================================================
+// is_ipv6(string) -> boolean
+// =============================================================================
+
+define_function!(IsIpv6Fn, vec![ArgumentType::String], None);
+
+impl Function for IsIpv6Fn {
+    fn evaluate(&self, args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
+        self.signature.validate(args, ctx)?;
+
+        let s = args[0].as_string().ok_or_else(|| {
+            JmespathError::new(
+                ctx.expression,
+                0,
+                ErrorReason::Parse("Expected string argument".to_owned()),
+            )
+        })?;
+
+        // Use standard library for accurate IPv6 validation
+        let is_valid = s.parse::<std::net::Ipv6Addr>().is_ok();
+        Ok(Rc::new(Variable::Bool(is_valid)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4453,5 +5010,380 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["l1"]["l2"]["l3"]["val"], "base");
         assert_eq!(parsed["l1"]["l2"]["l3"]["extra"], "overlay");
+    }
+
+    // =========================================================================
+    // TIER 3 FUNCTIONS TESTS
+    // =========================================================================
+
+    // =========================================================================
+    // url_encode() tests
+    // =========================================================================
+
+    #[test]
+    fn test_url_encode_basic() {
+        let data = json!({"s": "hello world"});
+        assert_eq!(query("url_encode(s)", &data).unwrap(), r#""hello%20world""#);
+    }
+
+    #[test]
+    fn test_url_encode_special_chars() {
+        let data = json!({"s": "foo=bar&baz=qux"});
+        assert_eq!(
+            query("url_encode(s)", &data).unwrap(),
+            r#""foo%3Dbar%26baz%3Dqux""#
+        );
+    }
+
+    #[test]
+    fn test_url_encode_unicode() {
+        let data = json!({"s": "café"});
+        assert_eq!(query("url_encode(s)", &data).unwrap(), r#""caf%C3%A9""#);
+    }
+
+    // =========================================================================
+    // url_decode() tests
+    // =========================================================================
+
+    #[test]
+    fn test_url_decode_basic() {
+        let data = json!({"s": "hello%20world"});
+        assert_eq!(query("url_decode(s)", &data).unwrap(), r#""hello world""#);
+    }
+
+    #[test]
+    fn test_url_decode_special_chars() {
+        let data = json!({"s": "foo%3Dbar%26baz%3Dqux"});
+        assert_eq!(
+            query("url_decode(s)", &data).unwrap(),
+            r#""foo=bar&baz=qux""#
+        );
+    }
+
+    #[test]
+    fn test_url_roundtrip() {
+        let data = json!({"s": "hello world!@#$%"});
+        let encoded = query("url_encode(s)", &data).unwrap();
+        let data2 = json!({"s": encoded.trim_matches('"')});
+        assert_eq!(
+            query("url_decode(s)", &data2).unwrap(),
+            r#""hello world!@#$%""#
+        );
+    }
+
+    // =========================================================================
+    // camel_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_camel_case_from_snake() {
+        let data = json!({"s": "hello_world"});
+        assert_eq!(query("camel_case(s)", &data).unwrap(), r#""helloWorld""#);
+    }
+
+    #[test]
+    fn test_camel_case_from_kebab() {
+        let data = json!({"s": "hello-world-foo"});
+        assert_eq!(query("camel_case(s)", &data).unwrap(), r#""helloWorldFoo""#);
+    }
+
+    #[test]
+    fn test_camel_case_from_spaces() {
+        let data = json!({"s": "hello world"});
+        assert_eq!(query("camel_case(s)", &data).unwrap(), r#""helloWorld""#);
+    }
+
+    // =========================================================================
+    // snake_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_snake_case_from_camel() {
+        let data = json!({"s": "helloWorld"});
+        assert_eq!(query("snake_case(s)", &data).unwrap(), r#""hello_world""#);
+    }
+
+    #[test]
+    fn test_snake_case_from_kebab() {
+        let data = json!({"s": "hello-world"});
+        assert_eq!(query("snake_case(s)", &data).unwrap(), r#""hello_world""#);
+    }
+
+    #[test]
+    fn test_snake_case_from_spaces() {
+        let data = json!({"s": "Hello World"});
+        assert_eq!(query("snake_case(s)", &data).unwrap(), r#""hello_world""#);
+    }
+
+    // =========================================================================
+    // kebab_case() tests
+    // =========================================================================
+
+    #[test]
+    fn test_kebab_case_from_camel() {
+        let data = json!({"s": "helloWorld"});
+        assert_eq!(query("kebab_case(s)", &data).unwrap(), r#""hello-world""#);
+    }
+
+    #[test]
+    fn test_kebab_case_from_snake() {
+        let data = json!({"s": "hello_world"});
+        assert_eq!(query("kebab_case(s)", &data).unwrap(), r#""hello-world""#);
+    }
+
+    #[test]
+    fn test_kebab_case_from_spaces() {
+        let data = json!({"s": "Hello World"});
+        assert_eq!(query("kebab_case(s)", &data).unwrap(), r#""hello-world""#);
+    }
+
+    // =========================================================================
+    // mode() tests
+    // =========================================================================
+
+    #[test]
+    fn test_mode_numbers() {
+        let data = json!({"arr": [1, 2, 2, 3, 2, 4]});
+        assert_eq!(query("mode(arr)", &data).unwrap(), "2");
+    }
+
+    #[test]
+    fn test_mode_strings() {
+        let data = json!({"arr": ["a", "b", "a", "c", "a"]});
+        assert_eq!(query("mode(arr)", &data).unwrap(), r#""a""#);
+    }
+
+    #[test]
+    fn test_mode_empty() {
+        let data = json!({"arr": []});
+        assert_eq!(query("mode(arr)", &data).unwrap(), "null");
+    }
+
+    // =========================================================================
+    // variance() tests
+    // =========================================================================
+
+    #[test]
+    fn test_variance_basic() {
+        let data = json!({"arr": [2, 4, 4, 4, 5, 5, 7, 9]});
+        let result: f64 = query("variance(arr)", &data).unwrap().parse().unwrap();
+        assert!((result - 4.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_variance_identical() {
+        let data = json!({"arr": [5, 5, 5, 5]});
+        assert_eq!(query("variance(arr)", &data).unwrap(), "0.0");
+    }
+
+    #[test]
+    fn test_variance_empty() {
+        let data = json!({"arr": []});
+        assert_eq!(query("variance(arr)", &data).unwrap(), "null");
+    }
+
+    // =========================================================================
+    // stddev() tests
+    // =========================================================================
+
+    #[test]
+    fn test_stddev_basic() {
+        let data = json!({"arr": [2, 4, 4, 4, 5, 5, 7, 9]});
+        let result: f64 = query("stddev(arr)", &data).unwrap().parse().unwrap();
+        assert!((result - 2.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_stddev_identical() {
+        let data = json!({"arr": [5, 5, 5, 5]});
+        assert_eq!(query("stddev(arr)", &data).unwrap(), "0.0");
+    }
+
+    // =========================================================================
+    // path_basename() tests
+    // =========================================================================
+
+    #[test]
+    fn test_path_basename_unix() {
+        let data = json!({"p": "/home/user/file.txt"});
+        assert_eq!(query("path_basename(p)", &data).unwrap(), r#""file.txt""#);
+    }
+
+    #[test]
+    fn test_path_basename_just_file() {
+        let data = json!({"p": "file.txt"});
+        assert_eq!(query("path_basename(p)", &data).unwrap(), r#""file.txt""#);
+    }
+
+    // =========================================================================
+    // path_dirname() tests
+    // =========================================================================
+
+    #[test]
+    fn test_path_dirname_unix() {
+        let data = json!({"p": "/home/user/file.txt"});
+        assert_eq!(query("path_dirname(p)", &data).unwrap(), r#""/home/user""#);
+    }
+
+    #[test]
+    fn test_path_dirname_just_file() {
+        let data = json!({"p": "file.txt"});
+        assert_eq!(query("path_dirname(p)", &data).unwrap(), r#""""#);
+    }
+
+    // =========================================================================
+    // path_ext() tests
+    // =========================================================================
+
+    #[test]
+    fn test_path_ext_basic() {
+        let data = json!({"p": "/home/user/file.txt"});
+        assert_eq!(query("path_ext(p)", &data).unwrap(), r#"".txt""#);
+    }
+
+    #[test]
+    fn test_path_ext_json() {
+        let data = json!({"p": "data.json"});
+        assert_eq!(query("path_ext(p)", &data).unwrap(), r#"".json""#);
+    }
+
+    #[test]
+    fn test_path_ext_none() {
+        let data = json!({"p": "Makefile"});
+        assert_eq!(query("path_ext(p)", &data).unwrap(), r#""""#);
+    }
+
+    // =========================================================================
+    // is_email() tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_email_valid() {
+        let data = json!({"e": "user@example.com"});
+        assert_eq!(query("is_email(e)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_email_valid_complex() {
+        let data = json!({"e": "user.name+tag@sub.example.co.uk"});
+        assert_eq!(query("is_email(e)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_email_invalid() {
+        let data = json!({"e": "not-an-email"});
+        assert_eq!(query("is_email(e)", &data).unwrap(), "false");
+    }
+
+    #[test]
+    fn test_is_email_invalid_no_domain() {
+        let data = json!({"e": "user@"});
+        assert_eq!(query("is_email(e)", &data).unwrap(), "false");
+    }
+
+    // =========================================================================
+    // is_url() tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_url_valid_http() {
+        let data = json!({"u": "http://example.com"});
+        assert_eq!(query("is_url(u)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_url_valid_https() {
+        let data = json!({"u": "https://example.com/path?query=1"});
+        assert_eq!(query("is_url(u)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_url_invalid() {
+        let data = json!({"u": "not-a-url"});
+        assert_eq!(query("is_url(u)", &data).unwrap(), "false");
+    }
+
+    #[test]
+    fn test_is_url_invalid_ftp() {
+        let data = json!({"u": "ftp://example.com"});
+        assert_eq!(query("is_url(u)", &data).unwrap(), "false");
+    }
+
+    // =========================================================================
+    // is_uuid() tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_uuid_valid_v4() {
+        let data = json!({"id": "550e8400-e29b-41d4-a716-446655440000"});
+        assert_eq!(query("is_uuid(id)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_uuid_valid_uppercase() {
+        let data = json!({"id": "550E8400-E29B-41D4-A716-446655440000"});
+        assert_eq!(query("is_uuid(id)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_uuid_invalid() {
+        let data = json!({"id": "not-a-uuid"});
+        assert_eq!(query("is_uuid(id)", &data).unwrap(), "false");
+    }
+
+    #[test]
+    fn test_is_uuid_invalid_short() {
+        let data = json!({"id": "550e8400-e29b-41d4"});
+        assert_eq!(query("is_uuid(id)", &data).unwrap(), "false");
+    }
+
+    // =========================================================================
+    // is_ipv4() tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv4_valid() {
+        let data = json!({"ip": "192.168.1.1"});
+        assert_eq!(query("is_ipv4(ip)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_ipv4_valid_localhost() {
+        let data = json!({"ip": "127.0.0.1"});
+        assert_eq!(query("is_ipv4(ip)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_ipv4_invalid() {
+        let data = json!({"ip": "256.1.1.1"});
+        assert_eq!(query("is_ipv4(ip)", &data).unwrap(), "false");
+    }
+
+    #[test]
+    fn test_is_ipv4_invalid_string() {
+        let data = json!({"ip": "not-an-ip"});
+        assert_eq!(query("is_ipv4(ip)", &data).unwrap(), "false");
+    }
+
+    // =========================================================================
+    // is_ipv6() tests
+    // =========================================================================
+
+    #[test]
+    fn test_is_ipv6_valid() {
+        let data = json!({"ip": "2001:0db8:85a3:0000:0000:8a2e:0370:7334"});
+        assert_eq!(query("is_ipv6(ip)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_ipv6_valid_short() {
+        let data = json!({"ip": "::1"});
+        assert_eq!(query("is_ipv6(ip)", &data).unwrap(), "true");
+    }
+
+    #[test]
+    fn test_is_ipv6_invalid() {
+        let data = json!({"ip": "192.168.1.1"});
+        assert_eq!(query("is_ipv6(ip)", &data).unwrap(), "false");
     }
 }

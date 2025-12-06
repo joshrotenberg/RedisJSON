@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 72 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 88 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -310,7 +310,7 @@ These functions are part of the official JMESPath specification and work identic
 
 ---
 
-## Custom Redis Functions (72)
+## Custom Redis Functions (88)
 
 These functions extend JMESPath with capabilities specific to RedisJSON. **Note:** Queries using these functions are not portable to other JMESPath implementations.
 
@@ -1002,6 +1002,196 @@ redis> JSON.JMESPATH doc "title_case(name)"
 "\"Hello World\""
 ```
 
+#### `camel_case(string) -> string`
+Convert string to camelCase.
+
+```bash
+redis> JSON.SET doc $ '{"s": "hello_world"}'
+redis> JSON.JMESPATH doc "camel_case(s)"
+"\"helloWorld\""
+
+redis> JSON.SET doc $ '{"s": "Hello World"}'
+redis> JSON.JMESPATH doc "camel_case(s)"
+"\"helloWorld\""
+```
+
+#### `snake_case(string) -> string`
+Convert string to snake_case.
+
+```bash
+redis> JSON.SET doc $ '{"s": "helloWorld"}'
+redis> JSON.JMESPATH doc "snake_case(s)"
+"\"hello_world\""
+
+redis> JSON.SET doc $ '{"s": "Hello World"}'
+redis> JSON.JMESPATH doc "snake_case(s)"
+"\"hello_world\""
+```
+
+#### `kebab_case(string) -> string`
+Convert string to kebab-case.
+
+```bash
+redis> JSON.SET doc $ '{"s": "helloWorld"}'
+redis> JSON.JMESPATH doc "kebab_case(s)"
+"\"hello-world\""
+
+redis> JSON.SET doc $ '{"s": "Hello World"}'
+redis> JSON.JMESPATH doc "kebab_case(s)"
+"\"hello-world\""
+```
+
+#### `url_encode(string) -> string`
+URL-encode a string.
+
+```bash
+redis> JSON.SET doc $ '{"q": "hello world"}'
+redis> JSON.JMESPATH doc "url_encode(q)"
+"\"hello%20world\""
+
+redis> JSON.SET doc $ '{"q": "foo=bar&baz=qux"}'
+redis> JSON.JMESPATH doc "url_encode(q)"
+"\"foo%3Dbar%26baz%3Dqux\""
+```
+
+#### `url_decode(string) -> string`
+URL-decode a string.
+
+```bash
+redis> JSON.SET doc $ '{"q": "hello%20world"}'
+redis> JSON.JMESPATH doc "url_decode(q)"
+"\"hello world\""
+```
+
+### Statistics Functions (3)
+
+#### `mode(array) -> any`
+Return the most frequently occurring value in an array.
+
+```bash
+redis> JSON.SET doc $ '{"scores": [1, 2, 2, 3, 2, 4]}'
+redis> JSON.JMESPATH doc "mode(scores)"
+"2"
+
+redis> JSON.SET doc $ '{"tags": ["a", "b", "a", "c", "a"]}'
+redis> JSON.JMESPATH doc "mode(tags)"
+"\"a\""
+```
+
+#### `variance(array) -> number`
+Calculate the population variance of a numeric array.
+
+```bash
+redis> JSON.SET doc $ '{"data": [2, 4, 4, 4, 5, 5, 7, 9]}'
+redis> JSON.JMESPATH doc "variance(data)"
+"4.0"
+```
+
+#### `stddev(array) -> number`
+Calculate the population standard deviation of a numeric array.
+
+```bash
+redis> JSON.SET doc $ '{"data": [2, 4, 4, 4, 5, 5, 7, 9]}'
+redis> JSON.JMESPATH doc "stddev(data)"
+"2.0"
+```
+
+### Path Functions (3)
+
+#### `path_basename(string) -> string`
+Extract the filename from a path.
+
+```bash
+redis> JSON.SET doc $ '{"p": "/home/user/file.txt"}'
+redis> JSON.JMESPATH doc "path_basename(p)"
+"\"file.txt\""
+```
+
+#### `path_dirname(string) -> string`
+Extract the directory from a path.
+
+```bash
+redis> JSON.SET doc $ '{"p": "/home/user/file.txt"}'
+redis> JSON.JMESPATH doc "path_dirname(p)"
+"\"/home/user\""
+```
+
+#### `path_ext(string) -> string`
+Extract the file extension from a path (including the dot).
+
+```bash
+redis> JSON.SET doc $ '{"p": "/home/user/file.txt"}'
+redis> JSON.JMESPATH doc "path_ext(p)"
+"\".txt\""
+
+redis> JSON.SET doc $ '{"p": "Makefile"}'
+redis> JSON.JMESPATH doc "path_ext(p)"
+"\"\""
+```
+
+### Validation Functions (5)
+
+#### `is_email(string) -> boolean`
+Check if string is a valid email address format.
+
+```bash
+redis> JSON.SET doc $ '{"e": "user@example.com"}'
+redis> JSON.JMESPATH doc "is_email(e)"
+"true"
+
+redis> JSON.SET doc $ '{"e": "not-an-email"}'
+redis> JSON.JMESPATH doc "is_email(e)"
+"false"
+```
+
+#### `is_url(string) -> boolean`
+Check if string is a valid HTTP/HTTPS URL format.
+
+```bash
+redis> JSON.SET doc $ '{"u": "https://example.com/path?query=1"}'
+redis> JSON.JMESPATH doc "is_url(u)"
+"true"
+
+redis> JSON.SET doc $ '{"u": "not-a-url"}'
+redis> JSON.JMESPATH doc "is_url(u)"
+"false"
+```
+
+#### `is_uuid(string) -> boolean`
+Check if string is a valid UUID format.
+
+```bash
+redis> JSON.SET doc $ '{"id": "550e8400-e29b-41d4-a716-446655440000"}'
+redis> JSON.JMESPATH doc "is_uuid(id)"
+"true"
+```
+
+#### `is_ipv4(string) -> boolean`
+Check if string is a valid IPv4 address.
+
+```bash
+redis> JSON.SET doc $ '{"ip": "192.168.1.1"}'
+redis> JSON.JMESPATH doc "is_ipv4(ip)"
+"true"
+
+redis> JSON.SET doc $ '{"ip": "256.1.1.1"}'
+redis> JSON.JMESPATH doc "is_ipv4(ip)"
+"false"
+```
+
+#### `is_ipv6(string) -> boolean`
+Check if string is a valid IPv6 address.
+
+```bash
+redis> JSON.SET doc $ '{"ip": "::1"}'
+redis> JSON.JMESPATH doc "is_ipv6(ip)"
+"true"
+
+redis> JSON.SET doc $ '{"ip": "2001:0db8:85a3:0000:0000:8a2e:0370:7334"}'
+redis> JSON.JMESPATH doc "is_ipv6(ip)"
+"true"
+```
+
 ### Utility/Conditional Functions (4)
 
 #### `now() -> number`
@@ -1282,17 +1472,17 @@ items[?is_number(@)]
 ### Standard Functions (26)
 `abs`, `avg`, `ceil`, `contains`, `ends_with`, `floor`, `join`, `keys`, `length`, `map`, `max`, `max_by`, `merge`, `min`, `min_by`, `not_null`, `reverse`, `sort`, `sort_by`, `starts_with`, `sum`, `to_array`, `to_number`, `to_string`, `type`, `values`
 
-### Custom String Functions (18)
-`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`, `upper_case`, `lower_case`, `title_case`
+### Custom String Functions (23)
+`lower`, `upper`, `trim`, `capitalize`, `title`, `split`, `replace`, `repeat`, `pad_left`, `pad_right`, `substr`, `slice`, `index_of`, `last_index_of`, `concat`, `upper_case`, `lower_case`, `title_case`, `camel_case`, `snake_case`, `kebab_case`, `url_encode`, `url_decode`
 
-### Custom Array Functions (18)
-`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`, `frequencies`
+### Custom Array Functions (19)
+`unique`, `zip`, `chunk`, `take`, `drop`, `flatten_deep`, `compact`, `range`, `index_at`, `includes`, `find_index`, `first`, `last`, `difference`, `intersection`, `union`, `group_by`, `frequencies`, `mode`
 
 ### Custom Object Functions (5)
 `entries`, `from_entries`, `pick`, `omit`, `deep_merge`
 
-### Custom Math/Statistics Functions (11)
-`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`
+### Custom Math/Statistics Functions (13)
+`round`, `floor_fn`, `ceil_fn`, `abs_fn`, `mod_fn`, `pow`, `sqrt`, `log`, `clamp`, `median`, `percentile`, `variance`, `stddev`
 
 ### Custom Type Functions (10)
 `to_string`, `to_number`, `to_boolean`, `type_of`, `is_string`, `is_number`, `is_boolean`, `is_array`, `is_object`, `is_null`
@@ -1303,8 +1493,14 @@ items[?is_number(@)]
 ### Custom Hash/Checksum Functions (4)
 `md5`, `sha1`, `sha256`, `crc32`
 
-### Custom Encoding Functions (2)
-`base64_encode`, `base64_decode`
+### Custom Encoding Functions (4)
+`base64_encode`, `base64_decode`, `url_encode`, `url_decode`
+
+### Custom Path Functions (3)
+`path_basename`, `path_dirname`, `path_ext`
+
+### Custom Validation Functions (5)
+`is_email`, `is_url`, `is_uuid`, `is_ipv4`, `is_ipv6`
 
 ---
 
@@ -1331,9 +1527,6 @@ The following functions are being considered for future implementation. Contribu
 |----------|-------------|---------|
 | `trim_start(s)` | Remove leading whitespace only | `trim_start("  hi")` → `"hi"` |
 | `trim_end(s)` | Remove trailing whitespace only | `trim_end("hi  ")` → `"hi"` |
-| `camel_case(s)` | Convert to camelCase | `camel_case("hello_world")` → `"helloWorld"` |
-| `snake_case(s)` | Convert to snake_case | `snake_case("helloWorld")` → `"hello_world"` |
-| `kebab_case(s)` | Convert to kebab-case | `kebab_case("helloWorld")` → `"hello-world"` |
 | `truncate(s, len, suffix?)` | Truncate with ellipsis | `truncate(title, 20, "...")` |
 | `wrap(s, width)` | Word-wrap text | `wrap(description, 80)` |
 | `match(s, regex)` | Regex match (returns bool) | `match(email, "^.+@.+$")` |
@@ -1367,9 +1560,6 @@ The following functions are being considered for future implementation. Contribu
 ### Math/Statistics Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `mode(arr)` | Most frequent value | `mode(ratings)` |
-| `stddev(arr)` | Standard deviation | `stddev(measurements)` |
-| `variance(arr)` | Variance | `variance(measurements)` |
 | `sin(n)`, `cos(n)`, `tan(n)` | Trigonometry | `sin(angle)` |
 | `random(min?, max?)` | Random number | `random(1, 100)` |
 | `sign(n)` | Sign (-1, 0, 1) | `sign(balance)` |
@@ -1388,8 +1578,6 @@ The following functions are being considered for future implementation. Contribu
 ### Encoding Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `url_encode(s)` | URL encode | `url_encode(query)` |
-| `url_decode(s)` | URL decode | `url_decode(param)` |
 | `json_encode(any)` | Encode as JSON string | `json_encode(obj)` |
 | `json_decode(s)` | Parse JSON string | `json_decode(json_str)` |
 | `hex_encode(s)` | Encode to hex | `hex_encode(data)` |
@@ -1413,18 +1601,11 @@ The following functions are being considered for future implementation. Contribu
 | Function | Description | Example |
 |----------|-------------|---------|
 | `path_join(...)` | Join path segments | `path_join(dir, subdir, file)` |
-| `path_basename(p)` | Get filename | `path_basename("/a/b/c.txt")` → `"c.txt"` |
-| `path_dirname(p)` | Get directory | `path_dirname("/a/b/c.txt")` → `"/a/b"` |
-| `path_ext(p)` | Get extension | `path_ext("file.json")` → `".json"` |
 | `url_parse(url)` | Parse URL components | `url_parse(link).host` |
 
 ### Validation Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `is_email(s)` | Valid email format | `is_email(contact)` |
-| `is_url(s)` | Valid URL format | `is_url(link)` |
-| `is_uuid(s)` | Valid UUID format | `is_uuid(id)` |
-| `is_ip(s)` | Valid IP address | `is_ip(addr)` |
 | `is_json(s)` | Valid JSON string | `is_json(payload)` |
 | `is_empty(x)` | Empty string/array/object | `is_empty(results)` |
 | `is_blank(s)` | Empty or whitespace only | `is_blank(input)` |
