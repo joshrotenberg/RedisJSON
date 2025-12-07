@@ -1750,29 +1750,19 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_fn_now_fallback() {
+    fn test_fn_now() {
         let data = json!({});
-        // With fallback - deterministic
-        let result = query("now(`1700000000`)", &data, &default_format()).unwrap();
-        let ts: f64 = result.parse().unwrap();
-        assert_eq!(ts, 1700000000.0);
-
-        // Without fallback - returns current time (non-deterministic, just check it's a number)
+        // Returns current time (non-deterministic, just check it's a number)
         let result = query("now()", &data, &default_format()).unwrap();
         let ts: f64 = result.parse().unwrap();
         assert!(ts > 1700000000.0); // Should be after Nov 2023
     }
 
     #[test]
-    fn test_fn_now_ms_fallback() {
+    fn test_fn_now_millis() {
         let data = json!({});
-        // With fallback - deterministic
-        let result = query("now_ms(`1700000000000`)", &data, &default_format()).unwrap();
-        let ts: f64 = result.parse().unwrap();
-        assert_eq!(ts, 1700000000000.0);
-
-        // Without fallback - returns current time in ms
-        let result = query("now_ms()", &data, &default_format()).unwrap();
+        // Returns current time in ms
+        let result = query("now_millis()", &data, &default_format()).unwrap();
         let ts: f64 = result.parse().unwrap();
         assert!(ts > 1700000000000.0); // Should be after Nov 2023
     }
