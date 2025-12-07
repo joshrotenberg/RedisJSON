@@ -14,7 +14,13 @@
 //! in all JSON.JMESPATH queries.
 //!
 //! Functions are provided by the `jmespath_extensions` crate and can be selectively
-//! enabled/disabled via configuration.
+//! enabled/disabled via module load arguments:
+//!
+//! ```text
+//! MODULE LOAD redisjson.so jmespath-allow "string,array,math" jmespath-deny "random,datetime"
+//! ```
+//!
+//! **Note:** Configuration is read at module load time. Changes require a module restart.
 //!
 //! ## Function Categories
 //!
@@ -50,7 +56,8 @@ use jmespath::Runtime;
 use std::collections::HashSet;
 use std::sync::{LazyLock, RwLock};
 
-/// All available function categories
+/// All available function categories (for introspection/debugging)
+#[allow(dead_code)]
 pub const ALL_CATEGORIES: &[&str] = &[
     "string",
     "array",
@@ -122,9 +129,58 @@ impl JmespathConfig {
 }
 
 /// Global JMESPath configuration
-/// TODO: Wire this to Redis CONFIG system
 pub static JMESPATH_CONFIG: LazyLock<RwLock<JmespathConfig>> =
     LazyLock::new(|| RwLock::new(JmespathConfig::default()));
+
+/// Global JMESPath runtime with Redis-specific functions.
+///
+/// This runtime includes all 26 standard JMESPath functions plus
+/// 150+ custom extensions from the jmespath_extensions crate.
+///
+/// **Note:** Configuration is read at module load time. Changes to
+/// `json.jmespath-allow` or `json.jmespath-deny` require a module restart.
+pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
+    let config = JMESPATH_CONFIG.read().unwrap();
+    build_runtime(&config)
+});
+
+/// Update the allow list (config only - runtime not rebuilt until restart)
+pub fn set_allow_categories(categories: &str) {
+    let mut config = JMESPATH_CONFIG.write().unwrap();
+    config.allow = JmespathConfig::parse_categories(categories);
+}
+
+/// Update the deny list (config only - runtime not rebuilt until restart)
+pub fn set_deny_categories(categories: &str) {
+    let mut config = JMESPATH_CONFIG.write().unwrap();
+    config.deny = JmespathConfig::parse_categories(categories);
+}
+
+/// Get current allow categories as comma-separated string (for introspection/debugging)
+#[allow(dead_code)]
+pub fn get_allow_categories() -> String {
+    let config = JMESPATH_CONFIG.read().unwrap();
+    if config.allow.is_empty() {
+        "*".to_string()
+    } else {
+        let mut cats: Vec<_> = config.allow.iter().cloned().collect();
+        cats.sort();
+        cats.join(",")
+    }
+}
+
+/// Get current deny categories as comma-separated string (for introspection/debugging)
+#[allow(dead_code)]
+pub fn get_deny_categories() -> String {
+    let config = JMESPATH_CONFIG.read().unwrap();
+    if config.deny.is_empty() {
+        "".to_string()
+    } else {
+        let mut cats: Vec<_> = config.deny.iter().cloned().collect();
+        cats.sort();
+        cats.join(",")
+    }
+}
 
 /// Build a JMESPath runtime with the given configuration
 pub fn build_runtime(config: &JmespathConfig) -> Runtime {
@@ -213,18 +269,6 @@ pub fn build_runtime(config: &JmespathConfig) -> Runtime {
     runtime
 }
 
-/// Custom JMESPath runtime with Redis-specific functions.
-///
-/// This runtime includes all 26 standard JMESPath functions plus
-/// 150+ custom extensions from the jmespath_extensions crate.
-///
-/// TODO: Once config is wired up, this should be rebuilt when config changes.
-/// For now, uses default config (all functions enabled).
-pub static REDIS_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
-    let config = JMESPATH_CONFIG.read().unwrap();
-    build_runtime(&config)
-});
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +331,12 @@ mod tests {
         let expr = runtime.compile("lower(`\"HELLO\"`)").unwrap();
         let result = expr.search(&serde_json::json!({})).unwrap();
         assert_eq!(result.as_string().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_get_set_categories() {
+        // These modify global state, so just test the format
+        let allow = get_allow_categories();
+        assert!(allow == "*" || allow.contains(",") || ALL_CATEGORIES.contains(&allow.as_str()));
     }
 }

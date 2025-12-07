@@ -402,7 +402,22 @@ macro_rules! redis_json_module_create {
             }
             let mut args_map = HashMap::<String, String>::new();
             for i in (0..args.len()).step_by(2) {
-                args_map.insert(args[i].to_string_lossy(), args[i + 1].to_string_lossy());
+                args_map.insert(args[i].to_string_lossy().to_lowercase(), args[i + 1].to_string_lossy());
+            }
+
+            // Apply JMESPath configuration from module args
+            #[cfg(feature = "jmespath")]
+            {
+                use $crate::jmespath_functions::{set_allow_categories, set_deny_categories};
+
+                if let Some(allow) = args_map.get("jmespath-allow") {
+                    ctx.log_notice(&format!("JMESPath allow categories: {}", allow));
+                    set_allow_categories(allow);
+                }
+                if let Some(deny) = args_map.get("jmespath-deny") {
+                    ctx.log_notice(&format!("JMESPath deny categories: {}", deny));
+                    set_deny_categories(deny);
+                }
             }
 
             Status::Ok
