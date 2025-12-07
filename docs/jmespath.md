@@ -1,6 +1,6 @@
 # JMESPath Support in RedisJSON
 
-> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 129 custom functions for data extraction and transformation. Compiled expressions are cached for performance.
+> **TL;DR:** `JSON.JMESPATH` provides JMESPath query support for RedisJSON - a powerful read-only query language with 26 standard + 150+ custom functions across 25 categories for data extraction and transformation. Function categories can be selectively enabled/disabled. Compiled expressions are cached for performance.
 
 RedisJSON extends its query capabilities with [JMESPath](https://jmespath.org/), a powerful query language for JSON. This document covers the `JSON.JMESPATH` command and the custom functions available in this implementation.
 
@@ -193,6 +193,83 @@ redis> JSON.JMESPATH features "[?environments[?@ == 'production']].{
   rollout: rollout_percentage
 }"
 ```
+
+## Configuration
+
+JMESPath function categories can be selectively enabled or disabled at module load time using the `jmespath-allow` and `jmespath-deny` arguments. This allows administrators to control the attack surface and restrict functionality to only what's needed.
+
+### Module Load Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `jmespath-allow` | Comma-separated list of categories to enable. If specified, only these categories are available. |
+| `jmespath-deny` | Comma-separated list of categories to disable. Takes precedence over allow. |
+
+### Available Categories
+
+| Category | Functions |
+|----------|-----------|
+| `string` | lower, upper, trim, split, replace, pad_left, pad_right, etc. |
+| `array` | unique, zip, chunk, take, drop, flatten_deep, compact, range, etc. |
+| `object` | items, from_items, pick, omit, deep_merge |
+| `math` | round, floor_fn, ceil_fn, abs_fn, mod_fn, pow, sqrt, log, etc. |
+| `type` | to_string, to_number, to_boolean, type_of, is_string, etc. |
+| `utility` | now, now_millis, default, coalesce, format, if, etc. |
+| `hash` | md5, sha1, sha256, sha512, crc32 |
+| `encoding` | base64_encode, base64_decode, hex_encode, hex_decode |
+| `url` | url_parse, url_encode, url_decode |
+| `regex` | regex_match, regex_replace, regex_extract |
+| `random` | random, shuffle, sample, uuid |
+| `validation` | is_email, is_url, is_ipv4, is_ipv6, is_uuid |
+| `path` | path_basename, path_dirname, path_ext, path_join |
+| `datetime` | now, now_millis, parse_date, format_date, date_add, date_diff |
+| `fuzzy` | levenshtein, jaro, jaro_winkler, sorensen_dice |
+| `phonetic` | soundex, metaphone, double_metaphone, nysiis |
+| `expression` | map_expr, filter_expr, find_expr, any_expr, all_expr, etc. |
+| `geo` | geo_distance, geo_bearing |
+| `semver` | semver_parse, semver_compare, semver_satisfies |
+| `network` | ip_to_int, int_to_ip, cidr_contains, is_private_ip |
+| `ids` | nanoid, ulid |
+| `text` | word_count, char_count, sentence_count |
+| `duration` | parse_duration, format_duration |
+| `color` | hex_to_rgb, rgb_to_hex |
+| `computing` | bytes_to_human, human_to_bytes |
+
+### Examples
+
+```bash
+# Only allow string, array, and math functions
+redis-server --loadmodule ./redisjson.so jmespath-allow "string,array,math"
+
+# Allow all except random and datetime (non-deterministic functions)
+redis-server --loadmodule ./redisjson.so jmespath-deny "random,datetime"
+
+# Minimal set: only string and type functions
+redis-server --loadmodule ./redisjson.so jmespath-allow "string,type"
+
+# Deny all custom functions (only standard JMESPath functions available)
+redis-server --loadmodule ./redisjson.so jmespath-deny "*"
+```
+
+### Configuration Behavior
+
+- **Default**: All categories are enabled
+- **Allow list**: If specified, only listed categories are enabled (empty = all)
+- **Deny list**: Listed categories are disabled, takes precedence over allow
+- **Wildcard**: Use `*` to match all categories (e.g., `jmespath-deny "*"`)
+- **Changes require restart**: Configuration is read at module load time
+
+### Security Considerations
+
+Consider restricting the following categories in production:
+
+| Category | Reason |
+|----------|--------|
+| `random` | Non-deterministic, may affect replication |
+| `datetime` | `now()` without fallback is non-deterministic |
+| `hash` | May be used for fingerprinting |
+| `network` | IP parsing/validation may expose internal details |
+| `regex` | Complex patterns could cause ReDoS |
 
 ## Command Syntax
 

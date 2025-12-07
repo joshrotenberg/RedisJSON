@@ -554,6 +554,115 @@ def testJmespathApiResponseTransform(env):
     r.assertEqual(parsed["total"], 200.0)
 
 
+# -----------------------------------------------------------------------------
+# Custom Function Categories
+# -----------------------------------------------------------------------------
+# Note: Testing jmespath-allow/jmespath-deny configuration requires starting
+# Redis with different module arguments. The config logic is tested in Rust
+# unit tests (jmespath_functions.rs). These tests verify that the default
+# config (all categories enabled) works correctly.
+
+
+def testJmespathStringFunctions(env):
+    """Test string category functions are available"""
+    r = env
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"name": "HELLO WORLD"}'))
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "lower(name)")
+    r.assertEqual(result, '"hello world"')
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "split(name, ' ')")
+    r.assertEqual(json.loads(result), ["HELLO", "WORLD"])
+
+
+def testJmespathArrayFunctions(env):
+    """Test array category functions are available"""
+    r = env
+    r.assertOk(
+        r.execute_command("JSON.SET", "doc", "$", '{"items": [1, 2, 2, 3, 3, 3]}')
+    )
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "unique(items)")
+    r.assertEqual(json.loads(result), [1, 2, 3])
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "chunk(items, `2`)")
+    r.assertEqual(json.loads(result), [[1, 2], [2, 3], [3, 3]])
+
+
+def testJmespathMathFunctions(env):
+    """Test math category functions are available"""
+    r = env
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"values": [1, 2, 3, 4, 5]}'))
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "median(values)")
+    r.assertEqual(json.loads(result), 3.0)
+
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"n": 3.14159}'))
+    result = r.execute_command("JSON.JMESPATH", "doc", "round(n, `2`)")
+    r.assertEqual(json.loads(result), 3.14)
+
+
+def testJmespathHashFunctions(env):
+    """Test hash category functions are available"""
+    r = env
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"data": "hello"}'))
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "md5(data)")
+    r.assertEqual(result, '"5d41402abc4b2a76b9719d911017c592"')
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "sha256(data)")
+    r.assertEqual(
+        result, '"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"'
+    )
+
+
+def testJmespathEncodingFunctions(env):
+    """Test encoding category functions are available"""
+    r = env
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"text": "hello"}'))
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "base64_encode(text)")
+    r.assertEqual(result, '"aGVsbG8="')
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "hex_encode(text)")
+    r.assertEqual(result, '"68656c6c6f"')
+
+
+def testJmespathValidationFunctions(env):
+    """Test validation category functions are available"""
+    r = env
+    r.assertOk(
+        r.execute_command(
+            "JSON.SET", "doc", "$", '{"email": "test@example.com", "ip": "192.168.1.1"}'
+        )
+    )
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "is_email(email)")
+    r.assertEqual(result, "true")
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "is_ipv4(ip)")
+    r.assertEqual(result, "true")
+
+
+def testJmespathObjectFunctions(env):
+    """Test object category functions are available"""
+    r = env
+    r.assertOk(r.execute_command("JSON.SET", "doc", "$", '{"a": 1, "b": 2, "c": 3}'))
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "pick(@, [`a`, `c`])")
+    parsed = json.loads(result)
+    r.assertEqual(parsed, {"a": 1, "c": 3})
+
+    result = r.execute_command("JSON.JMESPATH", "doc", "omit(@, [`b`])")
+    parsed = json.loads(result)
+    r.assertEqual(parsed, {"a": 1, "c": 3})
+
+
+# -----------------------------------------------------------------------------
+# Complex Real-World Examples
+# -----------------------------------------------------------------------------
+
+
 def testJmespathConfigManagement(env):
     """Test configuration management example"""
     r = env
