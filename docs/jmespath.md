@@ -323,18 +323,6 @@ redis> JSON.JMESPATH users "sort_by(@, &age) | [0].name"
 "\"Bob\""
 ```
 
-## JMESPath vs JSONPath
-
-| Feature | JMESPath | JSONPath |
-|---------|----------|----------|
-| **Purpose** | Query & Transform | Query & Mutate |
-| **Projections** | `[*].field` | `$[*].field` |
-| **Filters** | `[?expr]` | `$[?(@.expr)]` |
-| **Pipes** | `expr1 \| expr2` | Not supported |
-| **Multiselect** | `{a: f1, b: f2}` | Not supported |
-| **Functions** | 26 built-in + 129 custom | Limited |
-| **Mutations** | Read-only | Read/Write |
-
 ## Standard JMESPath Functions (26)
 
 These functions are part of the official JMESPath specification and work identically in all implementations.
@@ -387,7 +375,7 @@ These functions are part of the official JMESPath specification and work identic
 
 ---
 
-## Custom Redis Functions (129)
+## Custom Redis Functions (150+)
 
 These functions extend JMESPath with capabilities specific to RedisJSON. **Note:** Queries using these functions are not portable to other JMESPath implementations.
 
@@ -2216,6 +2204,42 @@ items[?is_number(@)]
 ### Custom Validation Functions (8)
 `is_email`, `is_url`, `is_uuid`, `is_ipv4`, `is_ipv6`, `is_empty`, `is_blank`, `is_json`
 
+### Custom Datetime Functions
+`now`, `now_millis`, `parse_date`, `format_date`, `date_add`, `date_diff`
+
+### Custom Fuzzy Matching Functions
+`levenshtein`, `jaro`, `jaro_winkler`, `sorensen_dice`
+
+### Custom Phonetic Functions
+`soundex`, `metaphone`, `double_metaphone`, `nysiis`, `sounds_like`
+
+### Custom Expression Functions
+`map_expr`, `filter_expr`, `find_expr`, `any_expr`, `all_expr`, `sort_by_expr`
+
+### Custom Geo Functions
+`haversine`, `haversine_km`, `haversine_mi`, `geo_distance`, `geo_bearing`
+
+### Custom Semver Functions
+`semver_parse`, `semver_compare`, `semver_matches`, `is_semver`
+
+### Custom Network Functions
+`ip_to_int`, `int_to_ip`, `cidr_contains`, `cidr_network`, `is_private_ip`
+
+### Custom ID Functions
+`nanoid`, `ulid`, `ulid_timestamp`
+
+### Custom Text Functions
+`word_count`, `char_count`, `reading_time`, `word_frequencies`
+
+### Custom Duration Functions
+`parse_duration`, `format_duration`
+
+### Custom Color Functions
+`hex_to_rgb`, `rgb_to_hex`, `lighten`, `darken`, `color_mix`
+
+### Custom Computing Functions
+`parse_bytes`, `format_bytes`, `bit_and`, `bit_or`, `bit_xor`
+
 ---
 
 ## Error Handling
@@ -2252,10 +2276,6 @@ The following functions are being considered for future implementation. Contribu
 ### Date/Time Functions
 | Function | Description | Example |
 |----------|-------------|---------|
-| `parse_date(s, format?)` | Parse to timestamp | `parse_date("2024-01-15", "YYYY-MM-DD")` |
-| `format_date(ts, format)` | Format timestamp | `format_date(created_at, "YYYY-MM-DD")` |
-| `date_add(ts, amount, unit)` | Add to date | `date_add(now(), 7, 'days')` |
-| `date_diff(ts1, ts2, unit)` | Difference | `date_diff(end, start, 'hours')` |
 | `date_part(ts, part)` | Extract component | `date_part(ts, 'year')` |
 | `start_of(ts, unit)` | Start of period | `start_of(ts, 'month')` |
 | `end_of(ts, unit)` | End of period | `end_of(ts, 'week')` |
@@ -2264,17 +2284,6 @@ The following functions are being considered for future implementation. Contribu
 | Function | Description | Example |
 |----------|-------------|---------|
 | `switch(val, cases, default)` | Switch/case | `switch(status, {1: 'ok', 2: 'err'}, 'unknown')` |
-| `all(arr, &expr)` | All match predicate | `all(items, &@ > 0)` |
-| `any(arr, &expr)` | Any matches predicate | `any(items, &@ > 100)` |
-| `none(arr, &expr)` | None match predicate | `none(items, &is_null(@))` |
-
-### Implementation Notes
-
-Some functions face technical limitations:
-
-- **Expression-based functions** (`index_by`, `all`, `any`, `map_values`, etc.): Require access to the JMESPath interpreter, which is not publicly exposed by the `jmespath` crate. Would require forking the crate or upstream changes.
-
-- **Date functions**: Would benefit from the `chrono` crate for robust parsing/formatting.
 
 ---
 

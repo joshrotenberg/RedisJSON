@@ -41,7 +41,8 @@ This fork adds experimental JMESPath query support via the `JSON.JMESPATH` comma
 * **Filters**: Query with conditions like `items[?price > \`100\`]`
 * **Pipes**: Chain operations with `expression | sort(@) | [0]`
 * **Multiselect**: Reshape output with `{name: field1, value: field2}`
-* **76 functions**: 26 standard JMESPath + 50 custom Redis-specific functions
+* **175+ functions**: 26 standard JMESPath + 150+ custom functions across 25 categories
+* **Configurable**: Enable/disable function categories via module args
 * **Expression caching**: Thread-local LRU cache (256 entries) for high-throughput workloads
 * **RESP3 support**: `FORMAT EXPAND` returns native Redis types instead of JSON strings
 
@@ -66,14 +67,9 @@ redis> JSON.JMESPATH users "unique([*].age) | sort(@)"
 [25,30]
 ```
 
-**Custom function categories:**
-* **String**: `lower`, `upper`, `trim`, `split`, `replace`, `pad_left`, `capitalize`, `title`...
-* **Array**: `unique`, `flatten_deep`, `chunk`, `take`, `drop`, `range`, `includes`...
-* **Math**: `round`, `pow`, `sqrt`, `clamp`, `log`, `mod_fn`...
-* **Type**: `is_string`, `is_array`, `type_of`, `to_number`, `to_boolean`...
-* **Utility**: `now`, `now_ms`, `default`, `entries`, `from_entries`
+**25 function categories** including string, array, object, math, type, utility, hash, encoding, url, regex, random, validation, path, datetime, fuzzy, phonetic, expression, geo, semver, network, ids, text, duration, color, and computing.
 
-See [docs/jmespath.md](docs/jmespath.md) for full documentation, or [jmespath.org](https://jmespath.org/) for the language specification.
+See [docs/jmespath.md](docs/jmespath.md) for full documentation including configuration options, or [jmespath.org](https://jmespath.org/) for the language specification.
 
 ## Documentation
 
