@@ -50,7 +50,7 @@ use crate::commands::{
 #[cfg(feature = "jmespath")]
 use crate::commands::{
     json_jmespath_command_impl, json_jmespath_eval_command_impl,
-    json_jmespath_functions_command_impl,
+    json_jmespath_functions_command_impl, json_jmespath_ref_command_impl,
 };
 use crate::redisjson::Format;
 
@@ -366,6 +366,13 @@ macro_rules! redis_json_module_create {
         json_jmespath_functions_command!(
             pub fn json_jmespath_functions(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 json_jmespath_functions_command_impl(ctx, args)
+            }
+        );
+
+        #[cfg(feature = "jmespath")]
+        json_jmespath_ref_command!(
+            pub fn json_jmespath_ref(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+                json_command!(json_jmespath_ref_command_impl)(ctx, args)
             }
         );
 

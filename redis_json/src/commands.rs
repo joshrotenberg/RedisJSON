@@ -3600,3 +3600,205 @@ mod tests {
         assert_eq!(pathes, pathes_expected);
     }
 }
+
+///
+/// JSON.JMESPATHREF <json-key> <query-key>
+///                  [INDENT indentation-string]
+///                  [NEWLINE line-break-string]
+///                  [SPACE space-string]
+///                  [FORMAT {STRING|EXPAND}]
+///
+/// Executes a JMESPath expression stored at query-key against the JSON document
+/// stored at json-key. This enables reusable query libraries - store complex
+/// queries once, use them everywhere.
+///
+/// Use cases:
+/// - Query library: Store complex, tested queries and reuse them
+/// - Query versioning: Update queries without changing application code
+/// - Dynamic query selection: Choose queries at runtime
+/// - Separation of concerns: Data engineers maintain queries, apps reference them
+///
+#[cfg(feature = "jmespath")]
+#[macro_export]
+macro_rules! json_jmespath_ref_command {
+    ($item:item) => {
+        #[::redis_module_macros::command(
+                            {
+                                name: "json.jmespathref",
+                                flags: [ReadOnly],
+                                acl_categories: [Read, Single("json")],
+                                arity: -3,
+                                complexity: "O(N) where N is the size of the JSON document",
+                                since: "2.8.0",
+                                summary: "Execute a stored JMESPath expression against a JSON document",
+                                key_spec: [
+                                    {
+                                        flags: [ReadOnly],
+                                        begin_search: Index({ index: 1 }),
+                                        find_keys: Range({ last_key: 1, steps: 1, limit: 0 }),
+                                    }
+                                ],
+                                args: [
+                                    {
+                                        name: "json-key",
+                                        arg_type: Key,
+                                        key_spec_index: 0,
+                                    },
+                                    {
+                                        name: "query-key",
+                                        arg_type: Key,
+                                        key_spec_index: 0,
+                                    },
+                                    {
+                                        name: "indent",
+                                        token: "INDENT",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "indent",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "newline",
+                                        token: "NEWLINE",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "newline",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "space",
+                                        token: "SPACE",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "space",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "format",
+                                        token: "FORMAT",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "format-token",
+                                                arg_type: OneOf,
+                                                subargs: [
+                                                    {
+                                                        name: "STRING",
+                                                        arg_type: PureToken,
+                                                        token: "STRING",
+                                                    },
+                                                    {
+                                                        name: "EXPAND",
+                                                        arg_type: PureToken,
+                                                        token: "EXPAND",
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        )]
+        $item
+    };
+}
+
+#[cfg(feature = "jmespath")]
+pub fn json_jmespath_ref_command_impl<M: Manager>(
+    manager: M,
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+
+    // Required: JSON key
+    let json_key = args.next_arg()?;
+
+    // Required: Query key (contains the JMESPath expression)
+    let query_key = args.next_arg()?;
+
+    // Optional: formatting options
+    let mut format_options = ReplyFormatOptions::new(is_resp3(ctx), ReplyFormat::STRING);
+
+    while let Ok(arg) = args.next_str() {
+        match arg {
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_INDENT) => {
+                format_options.indent = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_NEWLINE) => {
+                format_options.newline = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_SPACE) => {
+                format_options.space = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_FORMAT) => {
+                if !format_options.resp3 {
+                    return Err(RedisError::Str(
+                        "ERR FORMAT argument is not supported on RESP2",
+                    ));
+                }
+                let next = args.next_str()?;
+                if next.eq_ignore_ascii_case("STRING") {
+                    format_options.format = ReplyFormat::STRING;
+                } else if next.eq_ignore_ascii_case("EXPAND") {
+                    format_options.format = ReplyFormat::EXPAND;
+                } else {
+                    return Err(RedisError::String(format!(
+                        "ERR unknown FORMAT value '{next}'"
+                    )));
+                }
+            }
+            _ => {
+                return Err(RedisError::String(format!("ERR unknown argument '{arg}'")));
+            }
+        }
+    }
+
+    // Get the JMESPath expression from the query key (as a string)
+    let expr_str = ctx
+        .call("GET", &[&query_key])
+        .map_err(|e| RedisError::String(format!("ERR failed to read query key: {e}")))?;
+
+    let expr_str = match expr_str {
+        RedisValue::SimpleString(s) | RedisValue::BulkString(s) => s,
+        RedisValue::Null => {
+            return Err(RedisError::Str("ERR query key not found"));
+        }
+        _ => {
+            return Err(RedisError::Str("ERR query key is not a string"));
+        }
+    };
+
+    // Open JSON key for reading
+    let key = manager.open_key_read(ctx, &json_key)?;
+
+    // Get the JSON value - return Redis null if key doesn't exist
+    let value = match key.get_value()? {
+        Some(doc) => doc,
+        None => return Ok(RedisValue::Null),
+    };
+
+    // Evaluate JMESPath expression and return appropriate format
+    if format_options.is_resp3_reply() {
+        let result = crate::jmespath_query::query_to_resp3(&expr_str, value)
+            .map_err(|e| RedisError::String(e.msg))?;
+        Ok(result)
+    } else {
+        let result = crate::jmespath_query::query(&expr_str, value, &format_options)
+            .map_err(|e| RedisError::String(e.msg))?;
+        Ok(result.into())
+    }
+}
