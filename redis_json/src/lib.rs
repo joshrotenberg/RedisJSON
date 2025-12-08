@@ -37,8 +37,6 @@ use crate::c_api::{
     LLAPI_CTX,
 };
 
-#[cfg(feature = "jmespath")]
-use crate::commands::json_jmespath_command_impl;
 use crate::commands::{
     json_arr_append_command_impl, json_arr_index_command_impl, json_arr_insert_command_impl,
     json_arr_len_command_impl, json_arr_pop_command_impl, json_arr_trim_command_impl,
@@ -48,6 +46,11 @@ use crate::commands::{
     json_num_powby_command_impl, json_obj_keys_command_impl, json_obj_len_command_impl,
     json_resp_command_impl, json_set_command_impl, json_str_append_command_impl,
     json_str_len_command_impl, json_type_command_impl,
+};
+#[cfg(feature = "jmespath")]
+use crate::commands::{
+    json_jmespath_command_impl, json_jmespath_eval_command_impl,
+    json_jmespath_functions_command_impl,
 };
 use crate::redisjson::Format;
 
@@ -349,6 +352,20 @@ macro_rules! redis_json_module_create {
         json_jmespath_command!(
             pub fn json_jmespath(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 json_command!(json_jmespath_command_impl)(ctx, args)
+            }
+        );
+
+        #[cfg(feature = "jmespath")]
+        json_jmespath_eval_command!(
+            pub fn json_jmespath_eval(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+                json_jmespath_eval_command_impl(ctx, args)
+            }
+        );
+
+        #[cfg(feature = "jmespath")]
+        json_jmespath_functions_command!(
+            pub fn json_jmespath_functions(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+                json_jmespath_functions_command_impl(ctx, args)
             }
         );
 

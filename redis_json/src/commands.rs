@@ -3219,6 +3219,357 @@ pub fn json_jmespath_command_impl<M: Manager>(
     }
 }
 
+///
+/// JSON.JMESPATHEVAL <json-string> <expression>
+///                   [INDENT indentation-string]
+///                   [NEWLINE line-break-string]
+///                   [SPACE space-string]
+///                   [FORMAT {STRING|EXPAND}]
+///
+/// Evaluates a JMESPath expression against an inline JSON string.
+/// This is useful for transforming JSON data without storing it first.
+///
+#[cfg(feature = "jmespath")]
+#[macro_export]
+macro_rules! json_jmespath_eval_command {
+    ($item:item) => {
+        #[::redis_module_macros::command(
+                            {
+                                name: "json.jmespatheval",
+                                flags: [ReadOnly],
+                                acl_categories: [Read, Single("json")],
+                                arity: -3,
+                                complexity: "O(N) where N is the size of the JSON string",
+                                since: "2.8.0",
+                                summary: "Evaluate a JMESPath expression against an inline JSON string",
+                                key_spec: [],
+                                args: [
+                                    {
+                                        name: "json",
+                                        arg_type: String,
+                                    },
+                                    {
+                                        name: "expression",
+                                        arg_type: String,
+                                    },
+                                    {
+                                        name: "indent",
+                                        token: "INDENT",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "indent",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "newline",
+                                        token: "NEWLINE",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "newline",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "space",
+                                        token: "SPACE",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "space",
+                                                arg_type: String,
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        name: "format",
+                                        token: "FORMAT",
+                                        arg_type: Block,
+                                        flags: [Optional],
+                                        subargs: [
+                                            {
+                                                name: "format-token",
+                                                arg_type: OneOf,
+                                                subargs: [
+                                                    {
+                                                        name: "STRING",
+                                                        arg_type: PureToken,
+                                                        token: "STRING",
+                                                    },
+                                                    {
+                                                        name: "EXPAND",
+                                                        arg_type: PureToken,
+                                                        token: "EXPAND",
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        )]
+        $item
+    };
+}
+
+#[cfg(feature = "jmespath")]
+pub fn json_jmespath_eval_command_impl(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+
+    // Required: JSON string
+    let json_arg = args.next_arg()?;
+    let json_str = json_arg.try_as_str()?;
+
+    // Required: JMESPath expression
+    let expr = args.next_arg()?;
+    let expr_str = expr.try_as_str()?;
+
+    // Optional: formatting options
+    let mut format_options = ReplyFormatOptions::new(is_resp3(ctx), ReplyFormat::STRING);
+
+    while let Ok(arg) = args.next_str() {
+        match arg {
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_INDENT) => {
+                format_options.indent = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_NEWLINE) => {
+                format_options.newline = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_SPACE) => {
+                format_options.space = Some(args.next_str()?)
+            }
+            arg if arg.eq_ignore_ascii_case(CMD_ARG_FORMAT) => {
+                if !format_options.resp3 {
+                    return Err(RedisError::Str(
+                        "ERR FORMAT argument is not supported on RESP2",
+                    ));
+                }
+                let next = args.next_str()?;
+                if next.eq_ignore_ascii_case("STRING") {
+                    format_options.format = ReplyFormat::STRING;
+                } else if next.eq_ignore_ascii_case("EXPAND") {
+                    format_options.format = ReplyFormat::EXPAND;
+                } else {
+                    return Err(RedisError::String(format!(
+                        "ERR unknown FORMAT value '{next}'"
+                    )));
+                }
+            }
+            _ => {
+                return Err(RedisError::String(format!("ERR unknown argument '{arg}'")));
+            }
+        }
+    }
+
+    // Parse the JSON string
+    let value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| RedisError::String(format!("ERR invalid JSON: {e}")))?;
+
+    // Evaluate JMESPath expression and return appropriate format
+    if format_options.is_resp3_reply() {
+        let result = crate::jmespath_query::query_to_resp3(expr_str, &value)
+            .map_err(|e| RedisError::String(e.msg))?;
+        Ok(result)
+    } else {
+        let result = crate::jmespath_query::query(expr_str, &value, &format_options)
+            .map_err(|e| RedisError::String(e.msg))?;
+        Ok(result.into())
+    }
+}
+
+///
+/// JSON.JMESPATHFUNCTIONS [category]
+///
+/// Lists available JMESPath functions, optionally filtered by category.
+/// Returns an array of [category, name, signature] tuples.
+///
+#[cfg(feature = "jmespath")]
+#[macro_export]
+macro_rules! json_jmespath_functions_command {
+    ($item:item) => {
+        #[::redis_module_macros::command(
+                                    {
+                                        name: "json.jmespathfunctions",
+                                        flags: [ReadOnly, Fast],
+                                        acl_categories: [Read, Single("json")],
+                                        arity: -1,
+                                        complexity: "O(1)",
+                                        since: "2.8.0",
+                                        summary: "List available JMESPath functions",
+                                        key_spec: [],
+                                        args: [
+                                            {
+                                                name: "category",
+                                                arg_type: String,
+                                                flags: [Optional],
+                                            }
+                                        ]
+                                    }
+                                )]
+        $item
+    };
+}
+
+#[cfg(feature = "jmespath")]
+pub fn json_jmespath_functions_command_impl(_ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let category_filter = if args.len() > 1 {
+        Some(args[1].to_string_lossy().to_lowercase())
+    } else {
+        None
+    };
+
+    // Define all available functions with their categories and signatures
+    let functions: Vec<(&str, &str, &str)> = vec![
+        // Built-in JMESPath functions
+        ("builtin", "abs", "abs(number)"),
+        ("builtin", "avg", "avg(array[number])"),
+        ("builtin", "ceil", "ceil(number)"),
+        ("builtin", "contains", "contains(subject, search)"),
+        ("builtin", "ends_with", "ends_with(string, suffix)"),
+        ("builtin", "floor", "floor(number)"),
+        ("builtin", "join", "join(glue, array[string])"),
+        ("builtin", "keys", "keys(object)"),
+        ("builtin", "length", "length(subject)"),
+        ("builtin", "map", "map(expression, array)"),
+        ("builtin", "max", "max(array)"),
+        ("builtin", "max_by", "max_by(array, expression)"),
+        ("builtin", "merge", "merge(object, object, ...)"),
+        ("builtin", "min", "min(array)"),
+        ("builtin", "min_by", "min_by(array, expression)"),
+        ("builtin", "not_null", "not_null(arg, ...)"),
+        ("builtin", "reverse", "reverse(array|string)"),
+        ("builtin", "sort", "sort(array)"),
+        ("builtin", "sort_by", "sort_by(array, expression)"),
+        ("builtin", "starts_with", "starts_with(string, prefix)"),
+        ("builtin", "sum", "sum(array[number])"),
+        ("builtin", "to_array", "to_array(value)"),
+        ("builtin", "to_number", "to_number(value)"),
+        ("builtin", "to_string", "to_string(value)"),
+        ("builtin", "type", "type(value)"),
+        ("builtin", "values", "values(object)"),
+        // String functions
+        ("string", "upper", "upper(string)"),
+        ("string", "lower", "lower(string)"),
+        ("string", "trim", "trim(string)"),
+        ("string", "trim_left", "trim_left(string)"),
+        ("string", "trim_right", "trim_right(string)"),
+        ("string", "split", "split(string, delimiter)"),
+        ("string", "replace", "replace(string, from, to)"),
+        ("string", "pad_left", "pad_left(string, width, char)"),
+        ("string", "pad_right", "pad_right(string, width, char)"),
+        ("string", "title_case", "title_case(string)"),
+        ("string", "snake_case", "snake_case(string)"),
+        ("string", "camel_case", "camel_case(string)"),
+        ("string", "kebab_case", "kebab_case(string)"),
+        ("string", "truncate", "truncate(string, length, suffix)"),
+        // Math functions
+        ("math", "round", "round(number, precision)"),
+        ("math", "pow", "pow(base, exponent)"),
+        ("math", "sqrt", "sqrt(number)"),
+        ("math", "log", "log(number)"),
+        ("math", "log10", "log10(number)"),
+        ("math", "exp", "exp(number)"),
+        ("math", "sin", "sin(radians)"),
+        ("math", "cos", "cos(radians)"),
+        ("math", "tan", "tan(radians)"),
+        ("math", "asin", "asin(number)"),
+        ("math", "acos", "acos(number)"),
+        ("math", "atan", "atan(number)"),
+        ("math", "atan2", "atan2(y, x)"),
+        ("math", "sign", "sign(number)"),
+        ("math", "deg_to_rad", "deg_to_rad(degrees)"),
+        ("math", "rad_to_deg", "rad_to_deg(radians)"),
+        // Hash functions
+        ("hash", "md5", "md5(string)"),
+        ("hash", "sha1", "sha1(string)"),
+        ("hash", "sha256", "sha256(string)"),
+        ("hash", "sha512", "sha512(string)"),
+        ("hash", "crc32", "crc32(string)"),
+        // Encoding functions
+        ("encoding", "base64_encode", "base64_encode(string)"),
+        ("encoding", "base64_decode", "base64_decode(string)"),
+        ("encoding", "hex_encode", "hex_encode(string)"),
+        ("encoding", "hex_decode", "hex_decode(string)"),
+        ("encoding", "url_encode", "url_encode(string)"),
+        ("encoding", "url_decode", "url_decode(string)"),
+        // Validation functions
+        ("validation", "is_email", "is_email(string)"),
+        ("validation", "is_url", "is_url(string)"),
+        ("validation", "is_uuid", "is_uuid(string)"),
+        ("validation", "is_ipv4", "is_ipv4(string)"),
+        ("validation", "is_ipv6", "is_ipv6(string)"),
+        ("validation", "is_empty", "is_empty(value)"),
+        ("validation", "is_blank", "is_blank(string)"),
+        ("validation", "is_json", "is_json(string)"),
+        // Fuzzy matching functions
+        ("fuzzy", "levenshtein", "levenshtein(string, string)"),
+        ("fuzzy", "jaro_winkler", "jaro_winkler(string, string)"),
+        ("fuzzy", "sorensen_dice", "sorensen_dice(string, string)"),
+        // Phonetic functions
+        ("phonetic", "soundex", "soundex(string)"),
+        ("phonetic", "metaphone", "metaphone(string)"),
+        ("phonetic", "nysiis", "nysiis(string)"),
+        // DateTime functions
+        ("datetime", "now", "now()"),
+        (
+            "datetime",
+            "format_datetime",
+            "format_datetime(timestamp, format)",
+        ),
+        (
+            "datetime",
+            "parse_datetime",
+            "parse_datetime(string, format)",
+        ),
+        // ID generation functions
+        ("ids", "uuid", "uuid()"),
+        ("ids", "ulid", "ulid()"),
+        ("ids", "nanoid", "nanoid()"),
+        // Random functions
+        ("random", "random", "random(min?, max?)"),
+        ("random", "random_int", "random_int(min, max)"),
+        // Network functions
+        ("network", "is_private_ip", "is_private_ip(string)"),
+        ("network", "parse_ip", "parse_ip(string)"),
+        // Semver functions
+        ("semver", "semver_compare", "semver_compare(v1, v2)"),
+        ("semver", "semver_major", "semver_major(version)"),
+        ("semver", "semver_minor", "semver_minor(version)"),
+        ("semver", "semver_patch", "semver_patch(version)"),
+    ];
+
+    // Filter by category if specified
+    let filtered: Vec<_> = if let Some(ref cat) = category_filter {
+        functions
+            .into_iter()
+            .filter(|(c, _, _)| *c == cat.as_str())
+            .collect()
+    } else {
+        functions
+    };
+
+    // Format as array of arrays: [[category, name, signature], ...]
+    let result: Vec<RedisValue> = filtered
+        .iter()
+        .map(|(cat, name, sig)| {
+            RedisValue::Array(vec![
+                RedisValue::BulkString(cat.to_string()),
+                RedisValue::BulkString(name.to_string()),
+                RedisValue::BulkString(sig.to_string()),
+            ])
+        })
+        .collect();
+
+    Ok(RedisValue::Array(result))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
