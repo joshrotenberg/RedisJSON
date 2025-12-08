@@ -865,9 +865,9 @@ dependencies = [
 
 [[package]]
 name = "jmespath_extensions"
-version = "0.2.3"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08b2b609f17feffe32eea5dedcc6b939f3cf5464f62bf0fd31c065c5b47ae6b8"
+checksum = "b581f61f6a4879ac51c29adafe71b40ae9a43fdaa7655732c701277dc27c281e"
 dependencies = [
  "base64 0.22.1",
  "chrono",

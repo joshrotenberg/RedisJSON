@@ -1,0 +1,19 @@
+FROM rust:1.85-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    libclang-dev \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . .
+
+RUN cargo build --release
+
+FROM redis:7.4
+
+COPY --from=builder /build/target/release/librejson.so /usr/lib/redis/modules/
+
+CMD ["redis-server", "--loadmodule", "/usr/lib/redis/modules/librejson.so"]
