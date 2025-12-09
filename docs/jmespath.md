@@ -271,7 +271,11 @@ Consider restricting the following categories in production:
 | `network` | IP parsing/validation may expose internal details |
 | `regex` | Complex patterns could cause ReDoS |
 
-## Command Syntax
+## Commands
+
+### JSON.JMESPATH
+
+Query a JSON document using a JMESPath expression.
 
 ```
 JSON.JMESPATH key expression
@@ -281,7 +285,7 @@ JSON.JMESPATH key expression
     [FORMAT {STRING|EXPAND}]
 ```
 
-### Parameters
+#### Parameters
 
 | Parameter | Description |
 |-----------|-------------|
@@ -292,12 +296,103 @@ JSON.JMESPATH key expression
 | `SPACE` | String to use after colons |
 | `FORMAT` | Output format: `STRING` (JSON string) or `EXPAND` (RESP3 native types) |
 
-### Return Value
+#### Return Value
 
 - **RESP2**: JSON string containing the query result
 - **RESP3 with FORMAT STRING**: JSON string (default)
 - **RESP3 with FORMAT EXPAND**: Native RESP3 types (arrays, maps, integers, etc.)
 - **Null**: If the key does not exist
+
+### JSON.JMESPATHREF
+
+Execute a JMESPath expression stored in one key against JSON data stored in another key. This enables reusable query libraries—store complex queries once, use them everywhere.
+
+```
+JSON.JMESPATHREF json_key query_key
+    [INDENT indent-string]
+    [NEWLINE newline-string]
+    [SPACE space-string]
+```
+
+#### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `json_key` | The Redis key containing the JSON document |
+| `query_key` | The Redis key containing the JMESPath expression (string) |
+| `INDENT` | String to use for indentation (pretty printing) |
+| `NEWLINE` | String to use for line breaks |
+| `SPACE` | String to use after colons |
+
+#### Return Value
+
+- JSON string containing the query result
+- Error if either key does not exist or query key is not a string
+
+#### Example
+
+```bash
+# Store reusable queries
+redis> SET queries:summary 'users[*].{name: name, role: role}'
+OK
+redis> SET queries:admins 'users[?role == "admin"].name'
+OK
+redis> SET queries:count 'length(users)'
+OK
+
+# Store data
+redis> JSON.SET app:userdata $ '{"users": [{"name": "Alice", "role": "admin"}, {"name": "Bob", "role": "user"}, {"name": "Carol", "role": "admin"}]}'
+OK
+
+# Run stored queries
+redis> JSON.JMESPATHREF app:userdata queries:summary
+"[{\"name\":\"Alice\",\"role\":\"admin\"},{\"name\":\"Bob\",\"role\":\"user\"},{\"name\":\"Carol\",\"role\":\"admin\"}]"
+
+redis> JSON.JMESPATHREF app:userdata queries:admins
+"[\"Alice\",\"Carol\"]"
+
+redis> JSON.JMESPATHREF app:userdata queries:count
+"3"
+
+# Update query without changing application code
+redis> SET queries:summary 'users[*].{name: upper(name), role: role}'
+OK
+redis> JSON.JMESPATHREF app:userdata queries:summary
+"[{\"name\":\"ALICE\",\"role\":\"admin\"},{\"name\":\"BOB\",\"role\":\"user\"},{\"name\":\"CAROL\",\"role\":\"admin\"}]"
+```
+
+**Use cases:**
+- **Query library**: Store complex, tested queries and reuse them across your application
+- **Query versioning**: Update queries without changing application code
+- **Dynamic query selection**: Choose queries at runtime based on user permissions, feature flags, etc.
+- **Separation of concerns**: Data engineers maintain queries, apps just reference them
+
+### JSON.JMESPATHFUNCTIONS
+
+List available JMESPath functions, optionally filtered by category.
+
+```
+JSON.JMESPATHFUNCTIONS [category]
+```
+
+#### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `category` | Optional. Filter functions by category (e.g., "hash", "string", "validation") |
+
+#### Example
+
+```bash
+redis> JSON.JMESPATHFUNCTIONS hash
+1) 1) "hash"
+   2) "md5"
+   3) "md5(string) -> string"
+2) 1) "hash"
+   2) "sha1"
+   3) "sha1(string) -> string"
+...
+```
 
 ## Basic Examples
 
@@ -2309,3 +2404,5 @@ When disabled, the `JSON.JMESPATH` command is not registered and the jmespath cr
 - [JMESPath Specification](https://jmespath.org/specification.html)
 - [JMESPath Tutorial](https://jmespath.org/tutorial.html)
 - [JMESPath Examples](https://jmespath.org/examples.html)
+- [Standalone Redis JMESPath Module](https://github.com/joshrotenberg/redis-jmespath-module) - Use JMESPath with any Redis deployment (works with string keys or RedisJSON)
+- [jmespath_extensions](https://crates.io/crates/jmespath_extensions) - The extension functions library used by both implementations
